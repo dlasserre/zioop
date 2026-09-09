@@ -1,0 +1,4 @@
+.idea
+.ninja_log
+cmake-build-debug
+.deps

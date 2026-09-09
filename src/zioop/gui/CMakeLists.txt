@@ -1,0 +1,33 @@
+if(ZIOOP_BUILD_GUI)
+
+    set(ZIOOP_GUI_SOURCES
+            Agent.cpp
+            Renderer.cpp
+    )
+
+    file(GLOB_RECURSE ZIOOP_GUI_HEADERS CONFIGURE_DEPENDS
+            ${PROJECT_SOURCE_DIR}/includes/zioop/gui/*.hpp
+    )
+
+    add_library(
+            zioop_gui_lib
+            STATIC
+            ${ZIOOP_GUI_SOURCES}
+            ${ZIOOP_GUI_HEADERS}
+    )
+
+    target_include_directories(
+            zioop_gui_lib
+            PUBLIC
+            ${PROJECT_SOURCE_DIR}/includes
+    )
+
+    target_link_libraries(
+            zioop_gui_lib
+            PUBLIC
+            raylib
+
+            PRIVATE
+            zioop_flags
+    )
+endif()
