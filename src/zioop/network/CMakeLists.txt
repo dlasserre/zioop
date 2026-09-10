@@ -1,5 +1,7 @@
 set(ZIOOP_NETWORK_SOURCES
         Server.cpp
+        Connection.cpp
+        Protocol.cpp
         Client.cpp
 )
 
@@ -24,6 +26,7 @@ target_link_libraries(
         zioop_network
         PRIVATE
         zioop_flags
+        nlohmann_json::nlohmann_json
 )
 
 # Windows sockets

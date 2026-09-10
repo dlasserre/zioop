@@ -43,6 +43,7 @@ add_executable(
 target_link_libraries(
         zioop_server
         PRIVATE
+        nlohmann_json::nlohmann_json
         zioop_core
         zioop_network
         zioop_flags

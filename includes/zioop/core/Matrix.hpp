@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "zioop/core/Agent.hpp"
@@ -34,7 +35,7 @@ namespace core {
     public:
         explicit Matrix(std::size_t sizeX, std::size_t sizeY);
 
-        bool addAgent(Agent& agent, ANGLE angle);
+        std::optional<Position> addAgent(Agent& agent, ANGLE angle);
 
         [[nodiscard]]
         bool caseIsFull(const Position& position) const;

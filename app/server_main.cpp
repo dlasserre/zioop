@@ -3,9 +3,9 @@
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
-    #include <Windows.h>
+#include <Windows.h>
 #else
-    #include <csignal>
+#include <csignal>
 #endif
 
 #include "zioop/network/Server.hpp"
@@ -14,11 +14,9 @@ namespace {
     std::atomic_bool stopRequested{false};
 #ifdef _WIN32
 
-    BOOL WINAPI consoleHandler(DWORD signal)
-    {
+    BOOL WINAPI consoleHandler(DWORD signal) {
         if (signal == CTRL_C_EVENT ||
-            signal == CTRL_CLOSE_EVENT)
-        {
+            signal == CTRL_CLOSE_EVENT) {
             std::cout << "Received CTRL_CLOSE_EVENT" << std::endl;
             stopRequested = true;
             return TRUE;
@@ -27,22 +25,19 @@ namespace {
         return FALSE;
     }
 
-    void registerSignalHandlers()
-    {
+    void registerSignalHandlers() {
         SetConsoleCtrlHandler(consoleHandler, TRUE);
     }
 
 #else
 
-    void signalHandler(int signal)
-    {
+    void signalHandler(int signal) {
         if (signal == SIGINT || signal == SIGTERM) {
             stopRequested = true;
         }
     }
 
-    void registerSignalHandlers()
-    {
+    void registerSignalHandlers() {
         std::signal(SIGINT, signalHandler);
         std::signal(SIGTERM, signalHandler);
     }
@@ -54,7 +49,12 @@ int main() {
     registerSignalHandlers();
 
     std::cout << "Server started\n";
-    network::Server server("127.0.0.1", 9090);
+
+    network::Server server(
+        "127.0.0.1",
+        9090,
+        core::Matrix(20, 20)
+    );
 
     std::thread serverThread([&server] {
         std::cout << "Running server\n";

@@ -1,35 +1,48 @@
 #include "zioop/network/Server.hpp"
 
 #include <iostream>
-#include <ostream>
 #include <stdexcept>
-#include <thread>
+#include <utility>
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <nlohmann/json.hpp>
+
+#include "zioop/network/Connection.hpp"
+#include "zioop/network/Protocol.hpp"
+
 
 namespace network {
-    static std::string getClientIP(const sockaddr_in &client) {
-        char ip[INET_ADDRSTRLEN]{};
+    namespace {
+        std::string getClientIP(const sockaddr_in &client) {
+            char ip[INET_ADDRSTRLEN]{};
 
-        if (inet_ntop(
-                AF_INET,
-                &client.sin_addr,
-                ip,
-                sizeof(ip)
-            ) == nullptr) {
-            return {};
+            if (inet_ntop(
+                    AF_INET,
+                    &client.sin_addr,
+                    ip,
+                    sizeof(ip)
+                ) == nullptr) {
+                return {};
+            }
+
+            return ip;
         }
-
-        return ip;
     }
 
-    Server::Server(std::string address, std::uint16_t port)
-        : m_address(std::move(address)), m_port(port) {
-        WSAData wsaData{};
+    Server::Server(
+        std::string address,
+        const std::uint16_t port,
+        core::Matrix matrix
+    )
+        : m_matrix(std::move(matrix)),
+          m_address(std::move(address)),
+          m_port(port) {
+        WSADATA wsaData{};
 
-        const int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
-
-        if (result != 0) {
+        if (const int result =
+                    WSAStartup(MAKEWORD(2, 2), &wsaData);
+            result != 0) {
             throw std::runtime_error("WSAStartup failed");
         }
 
@@ -45,55 +58,47 @@ namespace network {
         }
     }
 
-    void Server::handleClient(Client &client) {
-        char buffer[1024];
 
-        while (client.running) {
-            const int received = recv(
-                client.client,
-                buffer,
-                sizeof(buffer),
-                0
-            );
-
-            if (received > 0) {
-                std::cout.write(buffer, received);
-                std::cout << std::endl;
-            } else if (received == 0) {
-                std::cout << "Client disconnected: " << client.ip << '\n';
-                client.running = false;
-                break;
-            } else {
-                std::cerr << "recv() failed: " << WSAGetLastError() << '\n';
-                break;
-            }
+    std::optional<core::Position> Server::addAgent() {
+        auto agent = core::Agent();
+        const auto position = m_matrix.addAgent(agent, core::BOTTOM_RIGHT);
+        if (position == std::nullopt) {
+            std::cerr << "Unable to add agent to matrix";
+            return std::nullopt;
         }
+        m_agents.emplace_back(std::move(agent));
+        return position;
     }
 
-    void Server::stop() {
-        m_running = false;
+    void Server::hello(
+        Connection &connection,
+        const Protocol::Message &message
+    ) {
+        std::cout << message.payload << std::endl;
+        const auto position = addAgent(); // For later, return position where agent was placed
+        const nlohmann::json payload = {
+            {
+                "position", {
+                    "x", position->x,
+                    "y", position->y
+                }
+            },
+        };
+        connection.send(Protocol::encode(
+            Protocol::ResponseType::OK,
+            payload.dump()
+        ));
+    }
 
-        if (m_socket != INVALID_SOCKET) {
-            shutdown(m_socket, SD_BOTH);
-            closesocket(m_socket);
-            m_socket = INVALID_SOCKET;
-        }
-
-        for (const auto &client: m_clients) {
-            client->running = false;
-
-            if (client->client != INVALID_SOCKET) {
-                shutdown(client->client, SD_BOTH);
-                closesocket(client->client);
-                client->client = INVALID_SOCKET;
-            }
-        }
-
-        for (const auto& client : m_clients) {
-            if (client->thread.joinable()) {
-                client->thread.join();
-            }
-        }
+    void Server::getMatrix(
+        Connection &connection,
+        const Protocol::Message & /* message */
+    ) {
+        // Réponse provisoire, en attendant la sérialisation de la matrice.
+        connection.send(Protocol::encode(
+            Protocol::ResponseType::KO,
+            "GET_MATRIX not implemented yet"
+        ));
     }
 
     void Server::Start() {
@@ -101,19 +106,20 @@ namespace network {
 
         serverAddress.sin_family = AF_INET;
         serverAddress.sin_port = htons(m_port);
-        inet_pton(
-            AF_INET,
-            m_address.c_str(),
-            &serverAddress.sin_addr
-        );
 
-        const int result = bind(
-            m_socket,
-            reinterpret_cast<sockaddr *>(&serverAddress),
-            sizeof(serverAddress)
-        );
+        if (inet_pton(
+                AF_INET,
+                m_address.c_str(),
+                &serverAddress.sin_addr
+            ) != 1) {
+            throw std::runtime_error("Invalid server address");
+        }
 
-        if (result == SOCKET_ERROR) {
+        if (bind(
+                m_socket,
+                reinterpret_cast<sockaddr *>(&serverAddress),
+                sizeof(serverAddress)
+            ) == SOCKET_ERROR) {
             throw std::runtime_error("Unable to bind socket");
         }
 
@@ -122,6 +128,7 @@ namespace network {
         }
 
         m_running = true;
+
         while (m_running) {
             sockaddr_in clientAddress{};
             int clientAddressSize = sizeof(clientAddress);
@@ -133,44 +140,112 @@ namespace network {
             );
 
             if (clientSocket == INVALID_SOCKET) {
-                std::cerr << "accept() failed\n";
+                if (!m_running) {
+                    break;
+                }
+                std::cerr
+                        << "accept() failed: "
+                        << WSAGetLastError()
+                        << '\n';
+
                 continue;
             }
 
+            std::string ip = getClientIP(clientAddress);
 
-            auto client = std::make_unique<Client>();
-            client->client = clientSocket;
-            client->ip = getClientIP(clientAddress);
-            client->port = ntohs(clientAddress.sin_port);
+            const std::uint16_t port =
+                    ntohs(clientAddress.sin_port);
 
-            Client *clientPtr = client.get();
 
-            clientPtr->thread = std::thread([this, clientPtr] {
-                handleClient(*clientPtr);
-            });
+            auto lambda = [this](Connection &connection, const Protocol::Frame &frame) {
+                handleFrame(connection, frame);
+            };
 
-            m_clients.push_back(std::move(client));
+            auto connection = std::make_unique<Connection>(
+                clientSocket,
+                ip,
+                port,
+                lambda
+            );
 
             std::cout
-                    << "New client connected ip=" << clientPtr->ip
-                    << " on port=" << clientPtr->port
+                    << "New client connected ip="
+                    << ip
+                    << " on port="
+                    << port
                     << '\n';
+
+            connection->start();
+
+            m_connections.push_back(
+                std::move(connection)
+            );
+        }
+    }
+
+    void Server::handleFrame(
+        Connection &connection,
+        const Protocol::Frame &frame
+    ) {
+        const Protocol::Message message{
+            .header = {
+                .type = static_cast<Protocol::MessageType>(frame.type),
+                .length = static_cast<std::uint32_t>(frame.payload.size())
+            },
+            .payload = frame.payload
+        };
+
+        handleMessage(connection, message);
+    }
+
+    void Server::handleMessage(
+        Connection &connection,
+        const Protocol::Message &message
+    ) {
+        using Type = Protocol::MessageType;
+
+        static const std::unordered_map<Type, Handler> handlers{
+            {Type::HELLO, &Server::hello},
+            {Type::GET_MATRIX, &Server::getMatrix},
+        };
+
+        const auto it = handlers.find(message.header.type);
+
+        if (it == handlers.end()) {
+            connection.send(Protocol::encode(
+                Protocol::ResponseType::KO,
+                "Unknown or unsupported message type"
+            ));
+            return;
+        }
+
+        const Handler method = it->second;
+
+        (this->*method)(connection, message);
+    }
+
+    void Server::stop() {
+        m_running = false;
+
+        if (m_socket != INVALID_SOCKET) {
+            shutdown(m_socket, SD_BOTH);
+            closesocket(m_socket);
+            m_socket = INVALID_SOCKET;
+        }
+
+        for (const auto &connection: m_connections) {
+            connection->requestStop();
+        }
+
+        for (const auto &connection: m_connections) {
+            connection->join();
         }
     }
 
     Server::~Server() {
-        for (const auto &client: m_clients) {
-            if (client->client != INVALID_SOCKET) {
-                closesocket(client->client);
-                client->client = INVALID_SOCKET;
-            }
-        }
-        m_clients.clear();
+        stop();
 
-        if (m_socket != INVALID_SOCKET) {
-            closesocket(m_socket);
-            m_socket = INVALID_SOCKET;
-        }
+        m_connections.clear();
 
         WSACleanup();
     }

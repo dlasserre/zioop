@@ -1,5 +1,6 @@
 #include "zioop/core/Matrix.hpp"
 
+#include <optional>
 #include <stdexcept>
 
 namespace core {
@@ -57,7 +58,7 @@ namespace core {
     }
 
 
-    bool Matrix::addAgent(
+    std::optional<Position> Matrix::addAgent(
         Agent& agent,
         const ANGLE angle
     ) {
@@ -65,7 +66,7 @@ namespace core {
         const Position position = angles.at(angle);
 
         if (caseIsFull(position)) {
-            return false;
+            return std::nullopt;
         }
 
         // On stocke l'adresse de l'agent
@@ -75,7 +76,7 @@ namespace core {
 
         m_agents.push_back(&agent);
 
-        return true;
+        return position;
     }
 
 }
