@@ -1,5 +1,6 @@
 #include "zioop/core/Matrix.hpp"
 
+#include <iostream>
 #include <optional>
 #include <stdexcept>
 
@@ -57,6 +58,63 @@ namespace core {
         return !m_data[position.x][position.y].empty();
     }
 
+    std::optional<Position> Matrix::moveAgent(
+        Agent& agent,
+        Direction direction
+    ) {
+
+        const Case* cell = agent.getCell();
+
+        if (!cell || !cell->agents.contains(agent.getId())) {
+            return std::nullopt;
+        }
+
+        Position target = cell->pos;
+
+        switch (direction) {
+            case Direction::NORTH:
+                target.x--;
+                break;
+            case Direction::SOUTH:
+                target.y = (target.y + 1) % m_sizeY;
+                break;
+            case Direction::EAST:
+                target.x = (target.x +1) % m_sizeX;
+                break;
+            case Direction::WEST:
+                target.x = target.x == 0 ? m_sizeX - 1 : target.x - 1;
+                break;
+            default:
+                return std::nullopt;
+        }
+
+        Case& destination = m_data[target.x][target.y];
+
+        // Dans le cadre d'une matrice d'une case ???
+        if (&destination == cell) {
+            return target;
+        }
+
+        if (!destination.empty()) {
+            return std::nullopt;
+        }
+
+        Case& source = m_data[cell->pos.x][cell->pos.y];
+
+        destination.agents.emplace(agent.getId(), &agent);
+        source.agents.erase(agent.getId());
+        agent.setCase(&destination);
+
+        std::cout
+            << "Agent=" << agent.getId()
+            << " from (" << cell->pos.x << ", " << cell->pos.y << ")"
+            << " to (" << target.x << ", " << target.y << ")"
+            << " direction (" << static_cast<std::size_t>(direction) << ")"
+            << std::endl;
+
+        return target;
+    }
+
 
     std::optional<Position> Matrix::addAgent(
         Agent& agent,
@@ -69,12 +127,12 @@ namespace core {
             return std::nullopt;
         }
 
-        // On stocke l'adresse de l'agent
         m_data[position.x][position.y]
             .agents
-            .push_back(&agent);
+            .emplace(agent.getId(), &agent);
 
-        m_agents.push_back(&agent);
+        m_agents.emplace(agent.getId(), &agent);
+        agent.setCase(&m_data[position.x][position.y]);
 
         return position;
     }

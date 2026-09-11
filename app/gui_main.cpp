@@ -73,7 +73,8 @@ int main() {
                     DARKGRAY
                 );
 
-                for (const core::Agent *agent: cell.agents) {
+                for (const auto &entry: cell.agents) {
+                    const core::Agent *agent = entry.second;
                     const Vector3 agentPosition{
                         position.x,
                         0.05f,

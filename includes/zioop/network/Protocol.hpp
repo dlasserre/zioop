@@ -1,5 +1,7 @@
 #pragma once
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -50,6 +52,10 @@ namespace network {
         struct Message {
             MessageHeader header;
             std::string payload;
+
+            nlohmann::json getData() const {
+                return nlohmann::json::parse(payload);
+            }
         };
 
         struct ResponseHeader {

@@ -8,6 +8,7 @@
 #include <ws2tcpip.h>
 #include <nlohmann/json.hpp>
 
+#include "zioop/network/Client.hpp"
 #include "zioop/network/Connection.hpp"
 #include "zioop/network/Protocol.hpp"
 
@@ -59,46 +60,175 @@ namespace network {
     }
 
 
-    std::optional<core::Position> Server::addAgent() {
-        auto agent = core::Agent();
-        const auto position = m_matrix.addAgent(agent, core::BOTTOM_RIGHT);
-        if (position == std::nullopt) {
-            std::cerr << "Unable to add agent to matrix";
+    std::optional<Server::AgentPlacement> Server::addAgent(
+        ClientSession &session,
+        const core::ANGLE angle
+    ) {
+        core::Position target = m_matrix.angles.at(angle);
+
+        if (m_matrix.caseIsFull(target)) {
             return std::nullopt;
         }
-        m_agents.emplace_back(std::move(agent));
-        return position;
+
+        auto agent = std::make_unique<core::Agent>();
+
+        core::Agent &agentRef = *agent;
+
+        session.addAgent(std::move(agent));
+
+        const auto position = m_matrix.addAgent(agentRef, angle);
+        if (!position) {
+            return std::nullopt;
+        }
+
+        return AgentPlacement{agentRef.getId(), *position};
+    }
+
+    ClientSession *Server::getClientSession(
+        Connection &connection
+    ) {
+        const auto it = m_sessions.find(&connection);
+
+        if (it == m_sessions.end()) {
+            return nullptr;
+        }
+        return it->second.get();
     }
 
     void Server::hello(
         Connection &connection,
-        const Protocol::Message &message
+        const Protocol::Message & /* message */
     ) {
-        std::cout << message.payload << std::endl;
-        const auto position = addAgent(); // For later, return position where agent was placed
+        std::optional<AgentPlacement> placement;
+
+        {
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+
+            ClientSession *session = getClientSession(connection);
+            if (nullptr != session) {
+                placement = addAgent(
+                    *session,
+                    core::BOTTOM_RIGHT
+                );
+            }
+        }
+
+        if (!placement) {
+            connection.send(Protocol::encode(
+                Protocol::ResponseType::KO,
+                "Unable to create agent"
+            ));
+            return;
+        }
+
         const nlohmann::json payload = {
+            {"agentID", placement->agentId},
             {
                 "position", {
-                    "x", position->x,
-                    "y", position->y
+                    {"x", placement->position.x},
+                    {"y", placement->position.y}
                 }
-            },
+            }
         };
+
         connection.send(Protocol::encode(
             Protocol::ResponseType::OK,
             payload.dump()
         ));
     }
 
+    void Server::move(
+        Connection &connection,
+        const Protocol::Message &message
+    ) {
+        ClientSession *session = getClientSession(connection);
+
+        if (!session) {
+            connection.send(
+                Protocol::encode(
+                    Protocol::ResponseType::KO,
+                    "Unable to move agent"
+                )
+            );
+            return;
+        }
+
+        try {
+            const auto data = message.getData();
+
+            const auto agentID =
+                    data.at("agentID").get<std::size_t>();
+
+            const auto agent = session->getAgent(agentID);
+
+            if (!agent) {
+                connection.send(
+                    Protocol::encode(
+                        Protocol::ResponseType::KO,
+                        "Agent not found !"
+                    )
+                );
+                return;
+            }
+
+            const auto direction = static_cast<core::Direction>(
+                data.at("direction").get<int>()
+            );
+            const auto position = m_matrix.moveAgent(*agent, direction);
+            if (!position) {
+                connection.send(
+                    Protocol::encode(
+                        Protocol::ResponseType::KO,
+                        "Unable to move agent"
+                    )
+                );
+                return;
+            }
+
+            const nlohmann::json payload = {
+                {
+                    "position", {
+                        {"x", position->x},
+                        {"y", position->y}
+                    }
+                }
+            };
+
+            connection.send(Protocol::encode(
+                Protocol::ResponseType::OK,
+                payload.dump()
+            ));
+        } catch (const nlohmann::json::exception &) {
+            connection.send(Protocol::encode(
+                Protocol::ResponseType::KO,
+                "Invalid payload"
+            ));
+        }
+    }
+
     void Server::getMatrix(
         Connection &connection,
         const Protocol::Message & /* message */
     ) {
-        // Réponse provisoire, en attendant la sérialisation de la matrice.
-        connection.send(Protocol::encode(
-            Protocol::ResponseType::KO,
-            "GET_MATRIX not implemented yet"
-        ));
+
+        // @todo vérifier que la request vient bien de GUI et pas d'un client ( protection ports ).
+
+        const nlohmann::json matrix{
+            {
+                "matrix", {
+                    {"xSize", m_matrix.getSizeX()},
+                    {"ySize", m_matrix.getSizeY()}
+                },
+                "agents" // @todo faire un format pour la liste des agents (id/pos).
+            }
+        };
+
+        connection.send(
+            Protocol::encode(
+                Protocol::ResponseType::OK,
+                matrix.dump()
+            )
+        );
     }
 
     void Server::Start() {
@@ -175,11 +305,20 @@ namespace network {
                     << port
                     << '\n';
 
-            connection->start();
+            Connection *connectionPtr = connection.get();
+            auto session = std::make_unique<ClientSession>(*connectionPtr);
 
-            m_connections.push_back(
-                std::move(connection)
-            );
+            m_connections.push_back(std::move(connection));
+
+            {
+                std::lock_guard<std::mutex> lock(m_stateMutex);
+                m_sessions.emplace(
+                    connectionPtr,
+                    std::move(session)
+                );
+            }
+
+            connectionPtr->start();
         }
     }
 
@@ -206,6 +345,7 @@ namespace network {
 
         static const std::unordered_map<Type, Handler> handlers{
             {Type::HELLO, &Server::hello},
+            {Type::MOVE, &Server::move},
             {Type::GET_MATRIX, &Server::getMatrix},
         };
 

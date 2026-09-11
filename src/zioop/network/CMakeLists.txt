@@ -3,6 +3,7 @@ set(ZIOOP_NETWORK_SOURCES
         Connection.cpp
         Protocol.cpp
         Client.cpp
+        ClientSession.cpp
 )
 
 file(GLOB_RECURSE ZIOOP_NETWORK_HEADERS CONFIGURE_DEPENDS
@@ -26,6 +27,7 @@ target_link_libraries(
         zioop_network
         PRIVATE
         zioop_flags
+        PUBLIC
         nlohmann_json::nlohmann_json
 )
 

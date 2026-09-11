@@ -3,11 +3,14 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 #include <winsock2.h>
 
+#include "zioop/network/ClientSession.hpp"
 #include "zioop/core/Matrix.hpp"
 #include "zioop/network/Connection.hpp"
 #include "zioop/network/Protocol.hpp"
@@ -41,6 +44,10 @@ namespace network {
             const Protocol::Message &
         );
 
+        ClientSession* getClientSession(
+            Connection &connection
+        );
+
         void handleFrame(
             Connection &connection,
             const Protocol::Frame &frame
@@ -56,15 +63,34 @@ namespace network {
             const Protocol::Message &message
         );
 
+        void move(
+            Connection &connection,
+            const Protocol::Message &message
+        );
+
         void getMatrix(
             Connection &connection,
             const Protocol::Message &message
         );
 
-        std::optional<core::Position> addAgent();
+        std::unordered_map<
+            Connection *,
+            std::unique_ptr<ClientSession>
+        > m_sessions;
+
+        std::mutex m_stateMutex;
+
+        struct AgentPlacement {
+            std::size_t agentId;
+            core::Position position;
+        };
+
+        std::optional<AgentPlacement> addAgent(
+            ClientSession& session,
+            core::ANGLE angle
+        );
 
         core::Matrix m_matrix;
-        std::vector<core::Agent> m_agents;
 
         std::atomic_bool m_running{false};
 
