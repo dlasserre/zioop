@@ -18,11 +18,16 @@ namespace network {
             void(Connection &, const Protocol::Frame &)
         >;
 
+        using DisconnectHandler = std::function<
+            void(Connection&)
+        >;
+
         Connection(
             SOCKET socket,
             std::string ip,
             std::uint16_t port,
-            FrameHandler frameHandler
+            FrameHandler frameHandler,
+            DisconnectHandler disconnectHandler
         );
 
         ~Connection();
@@ -49,5 +54,6 @@ namespace network {
         std::atomic_bool m_running{false};
 
         FrameHandler m_frameHandler;
+        DisconnectHandler m_disconnectHandler;
     };
 }

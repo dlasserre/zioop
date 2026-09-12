@@ -1,16 +1,33 @@
 #include <iostream>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <Windows.h>
+#include <array>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <random>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "zioop/network/Protocol.hpp"
+#include "zioop/core/Matrix.hpp"
 
 namespace {
+    std::atomic_bool stopRequested{false};
+
+    BOOL WINAPI handleConsoleSignal(DWORD signal) {
+        if (signal == CTRL_C_EVENT || signal == CTRL_BREAK_EVENT) {
+            stopRequested = true;
+            return TRUE;
+        }
+        return FALSE;
+    }
+
     void receiveExactly(SOCKET socket, char *buffer, int size) {
         int totalReceived = 0;
 
@@ -35,6 +52,39 @@ namespace {
             }
 
             totalReceived += received;
+        }
+    }
+
+    void sendCommand(
+        SOCKET socket,
+        const network::Protocol::MessageType messageType,
+        const std::string &payload
+    ) {
+        std::size_t totalSent = 0;
+        const auto message = network::Protocol::encode(
+            messageType,
+            payload
+        );
+
+        while (totalSent < message.size()) {
+            const int sent = send(
+                socket,
+                reinterpret_cast<const char *>(message.data() + totalSent),
+                static_cast<int>(message.size() - totalSent),
+                0
+            );
+
+            if (sent == SOCKET_ERROR) {
+                throw std::runtime_error(
+                    "send() failed: " + std::to_string(WSAGetLastError())
+                );
+            }
+
+            if (sent == 0) {
+                throw std::runtime_error("send() made no progress");
+            }
+
+            totalSent += static_cast<std::size_t>(sent);
         }
     }
 
@@ -76,6 +126,8 @@ namespace {
 
 
 int main() {
+    SetConsoleCtrlHandler(handleConsoleSignal, TRUE);
+
     WSADATA wsaData{};
 
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -120,34 +172,11 @@ int main() {
     try {
         using Protocol = network::Protocol;
 
-        const auto message = Protocol::encode(
+        sendCommand(
+            socketClient,
             Protocol::MessageType::HELLO,
             "Hello ZIOOP"
         );
-
-        std::size_t totalSent = 0;
-
-        while (totalSent < message.size()) {
-            const int sent = send(
-                socketClient,
-                reinterpret_cast<const char *>(message.data() + totalSent),
-                static_cast<int>(message.size() - totalSent),
-                0
-            );
-
-            if (sent == SOCKET_ERROR) {
-                throw std::runtime_error(
-                    "send() failed: " + std::to_string(WSAGetLastError())
-                );
-            }
-
-            if (sent == 0) {
-                throw std::runtime_error("send() made no progress");
-            }
-
-            totalSent += static_cast<std::size_t>(sent);
-        }
-
         const auto helloResponse = receiveResponse(socketClient);
 
         std::cout
@@ -158,47 +187,43 @@ int main() {
         if (helloResponse.header.type == Protocol::ResponseType::OK) {
             const auto helloData = nlohmann::json::parse(helloResponse.payload);
             const auto agentId = helloData.at("agentID").get<std::size_t>();
-            const nlohmann::json movePayload = {
-                {"agentID", agentId},
-                {"direction", 0} // NORTH
+            constexpr std::array directions{
+                core::Direction::NORTH,
+                core::Direction::SOUTH,
+                core::Direction::EAST,
+                core::Direction::WEST
             };
-            const auto moveMessage = Protocol::encode(
-                Protocol::MessageType::MOVE,
-                movePayload.dump()
-            );
+            std::mt19937 generator(std::random_device{}());
+            std::uniform_int_distribution<std::size_t> chooseDirection(0, directions.size() - 1);
 
-            totalSent = 0;
+            std::cout << "Random MOVE every 3 seconds. Ctrl+C to stop." << std::endl;
 
-            while (totalSent < moveMessage.size()) {
-                const int sent = send(
+            while (!stopRequested) {
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+                if (stopRequested) {
+                    break;
+                }
+
+                const auto direction = directions[chooseDirection(generator)];
+                const nlohmann::json movePayload = {
+                    {"agentID", agentId},
+                    {"direction", static_cast<std::uint16_t>(direction)}
+                };
+                sendCommand(
                     socketClient,
-                    reinterpret_cast<const char *>(moveMessage.data() + totalSent),
-                    static_cast<int>(moveMessage.size() - totalSent),
-                    0
+                    Protocol::MessageType::MOVE,
+                    movePayload.dump()
                 );
 
-                if (sent == SOCKET_ERROR) {
-                    throw std::runtime_error(
-                        "send() failed: " + std::to_string(WSAGetLastError())
-                    );
-                }
-
-                if (sent == 0) {
-                    throw std::runtime_error("send() made no progress");
-                }
-
-                totalSent += static_cast<std::size_t>(sent);
+                const auto moveResponse = receiveResponse(socketClient);
+                std::cout
+                        << "MOVE agent " << agentId
+                        << " direction " << static_cast<std::uint16_t>(direction) << ' '
+                        << (moveResponse.header.type == Protocol::ResponseType::OK ? "OK" : "KO")
+                        << ": " << moveResponse.payload << std::endl;
             }
 
-            const auto moveResponse = receiveResponse(socketClient);
-            std::cout
-                    << "MOVE agent " << agentId << ' '
-                    << (moveResponse.header.type == Protocol::ResponseType::OK ? "OK" : "KO")
-                    << ": " << moveResponse.payload << '\n';
-
-            exitCode = moveResponse.header.type == Protocol::ResponseType::OK
-                           ? EXIT_SUCCESS
-                           : EXIT_FAILURE;
+            exitCode = EXIT_SUCCESS;
         }
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';

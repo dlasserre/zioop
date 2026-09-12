@@ -3,7 +3,7 @@
 #include <cstddef>
 namespace core {
 
-    struct Case;
+    struct Cell;
 
     class Agent {
     public:
@@ -14,15 +14,15 @@ namespace core {
             return m_id;
         }
 
-        const Case* getCell() const {
+        const Cell* getCell() const {
             return m_cell;
         }
 
-        void setCase(Case* cell);
+        void setCell(Cell* cell);
 
     private:
         std::size_t m_id;
-        Case* m_cell{nullptr};
+        Cell* m_cell{nullptr};
     };
 
 }

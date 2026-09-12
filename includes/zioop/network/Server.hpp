@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <queue>
 
 #include <winsock2.h>
 
@@ -33,6 +34,8 @@ namespace network {
         Server(Server &&) = delete;
 
         Server &operator=(Server &&) = delete;
+
+        void processDisconnections();
 
         void Start();
 
@@ -96,6 +99,9 @@ namespace network {
 
         std::string m_address;
         std::uint16_t m_port{};
+
+        std::mutex m_disconnectionsMutex;
+        std::queue<Connection*> m_disconnections;
 
         SOCKET m_socket{INVALID_SOCKET};
 

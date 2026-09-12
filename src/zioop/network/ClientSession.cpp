@@ -9,11 +9,14 @@ namespace network {
         std::size_t nextClientId = 0;
     }
 
-    ClientSession::ClientSession(Connection &connection)
-        : m_connection(&connection), m_clientId(nextClientId++) {
+    ClientSession::ClientSession(
+        Connection &connection
+    ) : m_connection(&connection), m_clientId(nextClientId++) {
     }
 
-    core::Agent* ClientSession::getAgent(std::size_t agentId) {
+    core::Agent* ClientSession::getAgent(
+        std::size_t agentId
+    ) {
         const auto it = m_agents.find(agentId);
         if (it == m_agents.end()) {
             return nullptr;
@@ -21,8 +24,18 @@ namespace network {
         return it->second.get();
     }
 
-    void ClientSession::addAgent(std::unique_ptr<core::Agent> agent) {
+    void ClientSession::addAgent(
+        std::unique_ptr<core::Agent> agent
+    ) {
         const auto agentId = agent->getId();
-        m_agents.emplace(agentId, std::move(agent));
+        m_agents.emplace(agentId, std::move(agent)); // est l'autorité pour les agents.
     }
+
+    std::unordered_map<
+        std::size_t,
+        std::unique_ptr<core::Agent>
+    >& ClientSession::getAgents() {
+        return m_agents;
+    }
+
 }

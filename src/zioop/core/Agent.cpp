@@ -10,7 +10,7 @@ namespace core {
         : m_id(nextAgentId++) {
     }
 
-    void Agent::setCase(Case* cell) {
+    void Agent::setCell(Cell* cell) {
         m_cell = cell;
     }
 

@@ -59,6 +59,35 @@ namespace network {
         }
     }
 
+    void Server::processDisconnections() {
+        std::queue<Connection*> pending;
+        {
+            std::lock_guard<std::mutex> lock(m_disconnectionsMutex);
+            pending.swap(m_disconnections);
+        }
+
+        while (!pending.empty()) {
+            Connection *connection = pending.front();
+            pending.pop();
+            connection->join();
+
+            {
+                std::lock_guard<std::mutex> lock(m_stateMutex);
+
+                const auto it = m_sessions.find(connection);
+
+                if (it != m_sessions.end()) {
+                    for (const auto& [id, agent] : it->second->getAgents()) {
+                        m_matrix.removeAgent(*agent);
+                    }
+
+                    m_sessions.erase(it);
+                }
+            }
+
+            // puis supprimer la session et la connexion.
+        }
+    }
 
     std::optional<Server::AgentPlacement> Server::addAgent(
         ClientSession &session,
@@ -141,40 +170,25 @@ namespace network {
         Connection &connection,
         const Protocol::Message &message
     ) {
-        ClientSession *session = getClientSession(connection);
-
-        if (!session) {
-            connection.send(
-                Protocol::encode(
-                    Protocol::ResponseType::KO,
-                    "Unable to move agent"
-                )
-            );
-            return;
-        }
-
         try {
             const auto data = message.getData();
 
             const auto agentID =
                     data.at("agentID").get<std::size_t>();
 
-            const auto agent = session->getAgent(agentID);
-
-            if (!agent) {
-                connection.send(
-                    Protocol::encode(
-                        Protocol::ResponseType::KO,
-                        "Agent not found !"
-                    )
-                );
-                return;
-            }
-
             const auto direction = static_cast<core::Direction>(
                 data.at("direction").get<int>()
             );
-            const auto position = m_matrix.moveAgent(*agent, direction);
+            std::optional<core::Position> position;
+            {
+                std::lock_guard<std::mutex> lock(m_stateMutex);
+                if (auto* session = getClientSession(connection)) {
+                    if (auto* agent = session->getAgent(agentID)) {
+                        position = m_matrix.moveAgent(*agent, direction);
+                    }
+                }
+            }
+
             if (!position) {
                 connection.send(
                     Protocol::encode(
@@ -208,20 +222,43 @@ namespace network {
 
     void Server::getMatrix(
         Connection &connection,
-        const Protocol::Message & /* message */
+        const Protocol::Message &
     ) {
 
         // @todo vérifier que la request vient bien de GUI et pas d'un client ( protection ports ).
 
-        const nlohmann::json matrix{
-            {
-                "matrix", {
-                    {"xSize", m_matrix.getSizeX()},
-                    {"ySize", m_matrix.getSizeY()}
-                },
-                "agents" // @todo faire un format pour la liste des agents (id/pos).
+        nlohmann::json matrix;
+        {
+            // Copier un etat coherent avant de relacher le verrou et d'envoyer.
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+            nlohmann::json agents = nlohmann::json::array();
+
+            for (const auto& [id, agent] : m_matrix.getAgents()) {
+                const auto* cell = agent->getCell();
+                if (!cell) {
+                    continue;
+                }
+
+                agents.push_back({
+                    {"agentId", id},
+                    {"position", {
+                        {"x", cell->pos.x},
+                        {"y", cell->pos.y},
+                    }}
+                });
             }
-        };
+
+            matrix = {
+                {"matrix", {
+                    {"xSize", m_matrix.getSizeX()},
+                    {"ySize", m_matrix.getSizeY()},
+                    {"data", {
+                        {"resources", nlohmann::json::array()},
+                        {"agents", agents}
+                    }}
+                }}
+            };
+        }
 
         connection.send(
             Protocol::encode(
@@ -286,16 +323,22 @@ namespace network {
             const std::uint16_t port =
                     ntohs(clientAddress.sin_port);
 
-
             auto lambda = [this](Connection &connection, const Protocol::Frame &frame) {
                 handleFrame(connection, frame);
+            };
+
+            auto onDisconnect = [this](Connection &disconnectedConnection) {
+                std::lock_guard<std::mutex> lock_guard(m_disconnectionsMutex);
+                m_disconnections.push(&disconnectedConnection);
+                std::cout << "Client disconnected pulled into cleaning queue\n";
             };
 
             auto connection = std::make_unique<Connection>(
                 clientSocket,
                 ip,
                 port,
-                lambda
+                lambda,
+                onDisconnect
             );
 
             std::cout

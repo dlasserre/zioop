@@ -9,8 +9,13 @@ namespace network {
         const SOCKET socket,
         std::string ip,
         const std::uint16_t port,
-        FrameHandler frameHandler
-    ) : m_socket(socket), m_ip(std::move(ip)), m_port(port), m_frameHandler(std::move(frameHandler)) {
+        FrameHandler frameHandler,
+        DisconnectHandler disconnectHandler
+    ) : m_socket(socket),
+        m_ip(std::move(ip)),
+        m_port(port),
+        m_frameHandler(std::move(frameHandler)),
+        m_disconnectHandler(std::move(disconnectHandler)) {
     }
 
     void Connection::start() {
@@ -21,21 +26,24 @@ namespace network {
     }
 
     void Connection::send(
-        const std::vector<std::byte>& data
+        const std::vector<std::byte> &data
     ) const {
         std::size_t totalSent = 0;
 
         while (totalSent < data.size()) {
-
             const int sent = ::send(
                 m_socket,
-                reinterpret_cast<const char *>(data.data()),
+                reinterpret_cast<const char *>(data.data() + totalSent),
                 static_cast<int>(data.size() - totalSent),
                 0
             );
 
             if (sent == SOCKET_ERROR) {
                 std::cerr << "send() failed: " << WSAGetLastError() << std::endl;
+                break;
+            }
+
+            if (sent == 0) {
                 break;
             }
 
@@ -90,6 +98,9 @@ namespace network {
                 break;
             }
         }
+
+        m_running = false;
+        m_disconnectHandler(*this);
     }
 
     void Connection::requestStop() {

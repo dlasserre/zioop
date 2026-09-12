@@ -11,15 +11,20 @@ namespace network {
 
     class ClientSession {
     public:
-        explicit ClientSession(Connection& connection);
+        explicit ClientSession(Connection &connection);
 
         void addAgent(std::unique_ptr<core::Agent> agent);
 
-        core::Agent* getAgent(std::size_t agentId);
+        core::Agent *getAgent(std::size_t agentId);
+
+        std::unordered_map<
+            std::size_t,
+            std::unique_ptr<core::Agent>
+        > & getAgents();
 
     private:
         std::size_t m_clientId;
-        Connection* m_connection;
+        Connection *m_connection;
 
         std::unordered_map<
             std::size_t,
