@@ -105,6 +105,6 @@ namespace network {
 
         SOCKET m_socket{INVALID_SOCKET};
 
-        std::vector<std::unique_ptr<Connection> > m_connections;
+        std::vector<std::unique_ptr<Connection>> m_connections;
     };
 }

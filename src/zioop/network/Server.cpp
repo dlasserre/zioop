@@ -85,7 +85,15 @@ namespace network {
                 }
             }
 
-            // puis supprimer la session et la connexion.
+            auto it = std::find_if(
+                m_connections.begin(),
+                m_connections.end(),
+                [connection](const auto &value) {
+                    return value.get() == connection;
+            });
+            if (it != m_connections.end()) {
+                m_connections.erase(it);
+            }
         }
     }
 

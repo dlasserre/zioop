@@ -1,6 +1,7 @@
 if(ZIOOP_BUILD_GUI)
 
     set(ZIOOP_GUI_SOURCES
+            MatrixConnection.cpp
             Agent.cpp
             Renderer.cpp
     )
@@ -26,7 +27,7 @@ if(ZIOOP_BUILD_GUI)
             zioop_gui_lib
             PUBLIC
             raylib
-
+            nlohmann_json::nlohmann_json
             PRIVATE
             zioop_flags
     )
