@@ -3,7 +3,7 @@
 #include <cstddef>
 namespace core {
 
-    struct Cell;
+    class Cell;
 
     class Agent {
     public:
@@ -14,7 +14,7 @@ namespace core {
             return m_id;
         }
 
-        const Cell* getCell() const {
+        [[nodiscard]] Cell* getCell() const {
             return m_cell;
         }
 

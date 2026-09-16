@@ -41,6 +41,8 @@ namespace network {
 
         void stop();
 
+        void tick();
+
     private:
         using Handler = void (Server::*)(
             Connection &,
@@ -72,6 +74,11 @@ namespace network {
         );
 
         void getMatrix(
+            Connection &connection,
+            const Protocol::Message &message
+        );
+
+        void disconnect(
             Connection &connection,
             const Protocol::Message &message
         );

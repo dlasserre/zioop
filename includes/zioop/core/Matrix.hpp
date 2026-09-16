@@ -1,15 +1,14 @@
 #pragma once
 
+#include "zioop/core/Cell.hpp"
+#include "zioop/core/Agent.hpp"
+
 #include <array>
 #include <optional>
 #include <unordered_map>
 #include <vector>
 
-#include "zioop/core/Agent.hpp"
-
 namespace core {
-
-    constexpr unsigned int MAX_AGENTS_PER_CELL = 4;
 
     enum ANGLE {
         TOP_LEFT = 0,
@@ -25,22 +24,6 @@ namespace core {
         WEST = 270,
     };
 
-    struct Position {
-        std::size_t x;
-        std::size_t y;
-    };
-
-    struct Cell {
-        Position pos;
-        std::array<Agent*, MAX_AGENTS_PER_CELL> agents{};
-
-        bool isFull() const;
-        bool empty() const;
-        bool emplace(Agent& agent);
-        bool remove(const Agent& agent);
-        bool contains(const Agent& agent) const;
-    };
-
     class Matrix {
     public:
         explicit Matrix(std::size_t sizeX, std::size_t sizeY);
@@ -48,6 +31,8 @@ namespace core {
         std::optional<Position> addAgent(Agent& agent, ANGLE angle);
 
         void removeAgent(Agent& agent);
+
+        void updateResources() const;
 
         std::optional<Position> moveAgent(Agent& agent, Direction direction);
 

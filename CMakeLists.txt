@@ -5,7 +5,7 @@ project(zioop
         DESCRIPTION "Une arene C++ ou des modeles de langage recoltent, s'appellent et se battent"
         LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -65,6 +65,12 @@ endif()
 # ===========================================================================
 
 add_subdirectory(src/zioop/core)
+
+# ===========================================================================
+# AI
+# ===========================================================================
+option(ZIOOP_BUILD_AI "Construire le client AI" ON)
+add_subdirectory(src/zioop/ai)
 
 # ===========================================================================
 # NETWORK

@@ -62,10 +62,13 @@ int main() {
     });
 
     while (!stopRequested) {
+        const auto nextTick = std::chrono::steady_clock::now()
+                            + std::chrono::milliseconds(100);
+
         server.processDisconnections();
-        std::this_thread::sleep_for(
-            std::chrono::seconds(1)
-        );
+        server.tick();
+
+        std::this_thread::sleep_until(nextTick);
     }
     std::cout << "Server stopped\n";
     server.stop();

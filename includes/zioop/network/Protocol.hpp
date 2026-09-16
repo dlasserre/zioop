@@ -53,7 +53,7 @@ namespace network {
             MessageHeader header;
             std::string payload;
 
-            nlohmann::json getData() const {
+            [[nodiscard]] nlohmann::json getData() const {
                 return nlohmann::json::parse(payload);
             }
         };

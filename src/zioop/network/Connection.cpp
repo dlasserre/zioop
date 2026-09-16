@@ -55,6 +55,10 @@ namespace network {
         std::byte buffer[1024];
 
         while (m_running) {
+            if (m_socket == INVALID_SOCKET) {
+                break;
+            }
+
             const int received = recv(
                 m_socket,
                 reinterpret_cast<char *>(buffer),
@@ -70,8 +74,6 @@ namespace network {
                 );
 
                 while (const auto frame = Protocol::decode(m_receiveBuffer)) {
-                    std::cout << frame->payload << '\n';
-
                     m_frameHandler(*this, *frame);
 
                     const auto consumed = static_cast<std::ptrdiff_t>(
@@ -81,6 +83,7 @@ namespace network {
                         m_receiveBuffer.begin(),
                         m_receiveBuffer.begin() + consumed
                     );
+                    std::cout << frame->payload << '\n';
                 }
             } else if (received == 0) {
                 std::cout

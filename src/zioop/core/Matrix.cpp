@@ -2,58 +2,17 @@
 
 #include <iostream>
 #include <optional>
+#include <random>
 #include <stdexcept>
+#include <vector>
+
 
 namespace core {
-    bool Cell::emplace(Agent& agent) {
-        for (Agent*& _agent : agents) {
-            if (_agent == nullptr) {
-                _agent = &agent;
-                return true;
-            }
-        }
+    static std::mt19937 generator(std::random_device{}());
 
-        return false; // Aucun emplacement libre.
-    }
-
-    bool Cell::isFull() const {
-        for (const Agent* agent : agents) {
-            if (agent == nullptr) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    bool Cell::empty() const {
-        for (const Agent* agent : agents) {
-            if (agent != nullptr) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    bool Cell::remove(const Agent& agent) {
-        for (Agent*& _agent : agents) {
-            if (_agent == &agent) {
-                _agent = nullptr;
-                return true;
-            }
-        }
-
-        return false; // Agent absent de cette case.
-    }
-
-    bool Cell::contains(const Agent& agent) const {
-        for (Agent* const & _agent : agents) {
-            if (_agent == &agent) {
-                return true;
-            }
-        }
-
-        return false; // Agent absent de cette case.
-    }
+    constexpr std::array types{
+        ResourceType::FRUIT
+    };
 
     Matrix::Matrix(
         const std::size_t sizeX,
@@ -61,13 +20,14 @@ namespace core {
     )
         : m_sizeX(sizeX),
           m_sizeY(sizeY),
-          angles{{
-              {0, 0},
-              {sizeX - 1, 0},
-              {0, sizeY - 1},
-              {sizeX - 1, sizeY - 1}
-          }}
-    {
+          angles{
+              {
+                  {0, 0},
+                  {sizeX - 1, 0},
+                  {0, sizeY - 1},
+                  {sizeX - 1, sizeY - 1}
+              }
+          } {
         if (sizeX == 0 || sizeY == 0) {
             throw std::invalid_argument(
                 "Matrix dimensions must be greater than 0"
@@ -76,25 +36,41 @@ namespace core {
 
         m_data.resize(m_sizeX);
 
-        for (std::size_t x = 0; x < m_sizeX; ++x) {
+        std::uniform_int_distribution<int> quantity(0, 3);
+        std::uniform_int_distribution<std::size_t> chooseType(
+            0, types.size() - 1
+        );
 
+        for (std::size_t x = 0; x < m_sizeX; ++x) {
             m_data[x].resize(m_sizeY);
 
             for (std::size_t y = 0; y < m_sizeY; ++y) {
 
-                m_data[x][y].pos = {
+                Cell& cell = m_data[x][y];
+                cell.setPosition({
                     .x = x,
                     .y = y
-                };
+                });
+                const int count = quantity(generator);
+                for (int i = 0; i < count; ++i) {
+                    cell.addResource(types[chooseType(generator)]);
+                }
+            }
+        }
+    }
+
+    void Matrix::updateResources() const {
+        for (auto& column : m_data) {
+            for (auto& cell : column) {
+                cell.updateResources();
             }
         }
     }
 
 
     bool Matrix::caseIsFull(
-        const Position& position
+        const Position &position
     ) const {
-
         if (
             position.x >= m_sizeX ||
             position.y >= m_sizeY
@@ -108,17 +84,16 @@ namespace core {
     }
 
     std::optional<Position> Matrix::moveAgent(
-        Agent& agent,
+        Agent &agent,
         Direction direction
     ) {
-
-        const Cell* cell = agent.getCell();
+        Cell *cell = agent.getCell();
 
         if (!cell || !cell->contains(agent)) {
             return std::nullopt;
         }
-
-        Position target = cell->pos;
+        Position cellPosition = cell->getPosition();
+        Position target = cell->getPosition();
 
         switch (direction) {
             case Direction::NORTH:
@@ -128,7 +103,7 @@ namespace core {
                 target.y = (target.y + 1) % m_sizeY;
                 break;
             case Direction::EAST:
-                target.x = (target.x +1) % m_sizeX;
+                target.x = (target.x + 1) % m_sizeX;
                 break;
             case Direction::WEST:
                 target.x = target.x == 0 ? m_sizeX - 1 : target.x - 1;
@@ -137,7 +112,7 @@ namespace core {
                 return std::nullopt;
         }
 
-        Cell& destination = m_data[target.x][target.y];
+        Cell &destination = m_data[target.x][target.y];
 
         // Dans le cadre d'une matrice d'une seule case ???
         if (&destination == cell) {
@@ -148,25 +123,26 @@ namespace core {
             return std::nullopt;
         }
 
-        Cell& source = m_data[cell->pos.x][cell->pos.y];
+        Cell &source = m_data[cellPosition.x][cellPosition.y];
 
         destination.emplace(agent);
         source.remove(agent);
         agent.setCell(&destination);
 
         std::cout
-            << "Agent=" << agent.getId()
-            << " from (" << cell->pos.x << ", " << cell->pos.y << ")"
-            << " to (" << target.x << ", " << target.y << ")"
-            << " direction (" << static_cast<std::size_t>(direction) << ")"
-            << std::endl;
+                << "Agent=" << agent.getId()
+                << " from (" << cellPosition.x << ", " << cellPosition.y << ")"
+                << " to (" << target.x << ", " << target.y << ")"
+                << " direction (" << static_cast<std::size_t>(direction) << ")"
+                << std::endl;
 
         return target;
     }
 
-    void Matrix::removeAgent(Agent& agent) {
-        if (const Cell* cell = agent.getCell()) {
-            Cell& source = m_data[cell->pos.x][cell->pos.y];
+    void Matrix::removeAgent(Agent &agent) {
+        if (const Cell *cell = agent.getCell()) {
+            Position cellPosition = cell->getPosition();
+            Cell &source = m_data[cellPosition.x][cellPosition.y];
             source.remove(agent);
         }
         m_agents.erase(agent.getId());
@@ -174,10 +150,9 @@ namespace core {
     }
 
     std::optional<Position> Matrix::addAgent(
-        Agent& agent,
+        Agent &agent,
         const ANGLE angle
     ) {
-
         const Position position = angles.at(angle);
 
         if (caseIsFull(position)) {
@@ -191,5 +166,4 @@ namespace core {
 
         return position;
     }
-
 }

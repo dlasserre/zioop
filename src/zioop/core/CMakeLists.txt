@@ -1,6 +1,8 @@
 set(ZIOOP_CORE_SOURCES
+        Cell.cpp
         Matrix.cpp
         Agent.cpp
+        Resource.cpp
 )
 
 file(GLOB_RECURSE ZIOOP_CORE_HEADERS CONFIGURE_DEPENDS

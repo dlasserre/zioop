@@ -61,6 +61,7 @@ add_executable(
 target_link_libraries(
         zioop_ai
         PRIVATE
+        zioop_ai_lib
         zioop_core
         zioop_network
         zioop_flags

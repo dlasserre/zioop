@@ -185,7 +185,7 @@ namespace network {
                     data.at("agentID").get<std::size_t>();
 
             const auto direction = static_cast<core::Direction>(
-                data.at("direction").get<int>()
+                data.at("direction").get<std::uint16_t>()
             );
             std::optional<core::Position> position;
             {
@@ -250,8 +250,8 @@ namespace network {
                 agents.push_back({
                     {"agentId", id},
                     {"position", {
-                        {"x", cell->pos.x},
-                        {"y", cell->pos.y},
+                        {"x", cell->getPosition().x},
+                        {"y", cell->getPosition().y},
                     }}
                 });
             }
@@ -373,6 +373,11 @@ namespace network {
         }
     }
 
+    void Server::tick() {
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+        m_matrix.updateResources();
+    }
+
     void Server::handleFrame(
         Connection &connection,
         const Protocol::Frame &frame
@@ -398,6 +403,7 @@ namespace network {
             {Type::HELLO, &Server::hello},
             {Type::MOVE, &Server::move},
             {Type::GET_MATRIX, &Server::getMatrix},
+            {Type::DISCONNECT, &Server::disconnect},
         };
 
         const auto it = handlers.find(message.header.type);
@@ -413,6 +419,13 @@ namespace network {
         const Handler method = it->second;
 
         (this->*method)(connection, message);
+    }
+
+    void Server::disconnect(
+        Connection &connection,
+        const Protocol::Message &
+    ) {
+        connection.requestStop();
     }
 
     void Server::stop() {
