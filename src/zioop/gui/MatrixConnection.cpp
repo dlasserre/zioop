@@ -1,4 +1,7 @@
 #include "zioop/gui/MatrixConnection.hpp"
+
+#include <iostream>
+
 #include "zioop/network/Protocol.hpp"
 
 #include <nlohmann/json.hpp>
@@ -57,6 +60,43 @@ namespace gui {
                 (static_cast<float>(agent.y) + offset.y) * zioop::CELL_SIZE
             };
         }
+
+        std::map<std::pair<std::size_t, std::size_t>, std::size_t> resourceSlots;
+
+        const auto& resources = matrix.at("data").at("resources");
+
+        if (!resources.is_array()) {
+            throw std::runtime_error("Resources must be an array");
+        }
+
+        for (const auto& entry : resources) {
+            const auto& position = entry.at("position");
+            const auto x = readUnsigned(position.at("x"));
+            const auto y = readUnsigned(position.at("y"));
+
+            if (x >= snapshot.width || y >= snapshot.height) {
+                throw std::runtime_error("Resource outside the matrix");
+            }
+
+            // Décaler les fruits d'une même case pour les distinguer.
+            const auto slot = resourceSlots[{x, y}]++;
+            const float offsetX =
+                (static_cast<float>(slot % 3) - 1.0f) * 0.22f;
+            const float offsetZ =
+                static_cast<float>(slot / 3) * 0.22f;
+
+            snapshot.resources.push_back({
+                .type = entry.at("type").get<int>(),
+                .rotting = entry.at("rotting").get<int>(),
+                .position = {
+                    (static_cast<float>(x) + offsetX) * zioop::CELL_SIZE,
+                    0.12f,
+                    (static_cast<float>(y) + offsetZ) * zioop::CELL_SIZE
+                }
+            });
+        }
+
+
         return snapshot;
     }
 
@@ -105,6 +145,7 @@ namespace gui {
             if (type != Protocol::ResponseType::OK && type != Protocol::ResponseType::MATRIX_STATE) {
                 throw std::runtime_error("Unexpected response to GET_MATRIX");
             }
+            // std::cout << "GET_MATRIX: " << payload << std::endl;
             return parseMatrix(nlohmann::json::parse(payload));
         } catch (...) {
             close();

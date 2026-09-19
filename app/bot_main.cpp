@@ -1,10 +1,9 @@
-#include <format>
 #include <iostream>
-#include <print>
+#include <thread>
+#include <cstdlib>
+#include <functional>
 
 int main() {
 
-    std::print( std::cout, "Salut ca va {:.2f}",10.123f);
-
-    return 0;
+    return EXIT_SUCCESS;
 }

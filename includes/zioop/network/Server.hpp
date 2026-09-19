@@ -78,6 +78,11 @@ namespace network {
             const Protocol::Message &message
         );
 
+        void lookingAt(
+            Connection &connection,
+            const Protocol::Message &message
+        );
+
         void disconnect(
             Connection &connection,
             const Protocol::Message &message

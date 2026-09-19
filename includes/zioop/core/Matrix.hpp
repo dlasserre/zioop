@@ -9,7 +9,6 @@
 #include <vector>
 
 namespace core {
-
     enum ANGLE {
         TOP_LEFT = 0,
         TOP_RIGHT,
@@ -24,24 +23,54 @@ namespace core {
         WEST = 270,
     };
 
+    struct Offset {
+        int x;
+        int y;
+    };
+
+    constexpr Offset getOffset(const Direction direction) {
+        switch (direction) {
+            case Direction::NORTH: return {0, -1};
+            case Direction::SOUTH: return {0, 1};
+            case Direction::EAST: return {1, 0};
+            case Direction::WEST: return {-1, 0};
+        }
+        return {0, 0};
+    }
+
     class Matrix {
     public:
         explicit Matrix(std::size_t sizeX, std::size_t sizeY);
 
-        std::optional<Position> addAgent(Agent& agent, ANGLE angle);
+        std::optional<Position> addAgent(Agent &agent, ANGLE angle);
 
-        void removeAgent(Agent& agent);
+        void removeAgent(Agent &agent);
 
         void updateResources() const;
 
-        std::optional<Position> moveAgent(Agent& agent, Direction direction);
+        [[nodiscard]]
+        std::optional<Position> getNeighborPosition(
+            Position target,
+            Direction direction
+        ) const;
+
+        [[nodiscard]] std::vector<Position> getVisiblePositions(
+            Position origin,
+            Direction direction,
+            int level
+        ) const;
 
         [[nodiscard]]
-        bool caseIsFull(const Position& position) const;
+        const Cell *getCell(const Position &position) const;
+
+        std::optional<Position> moveAgent(Agent &agent, Direction direction);
 
         [[nodiscard]]
-        const std::vector<std::vector<Cell>>& getMatrix() const {
-            return m_data;
+        bool caseIsFull(const Position &position) const;
+
+        [[nodiscard]]
+        const std::vector<std::vector<Cell> > &getMatrix() const {
+            return m_cells;
         }
 
         [[nodiscard]]
@@ -50,7 +79,7 @@ namespace core {
         }
 
         [[nodiscard]]
-        std::unordered_map<std::size_t, Agent*> getAgents() const {
+        std::unordered_map<std::size_t, Agent *> getAgents() const {
             return m_agents;
         }
 
@@ -72,10 +101,8 @@ namespace core {
         const std::array<Position, 4> angles;
 
     private:
-        std::vector<std::vector<Cell>> m_data;
+        std::vector<std::vector<Cell> > m_cells;
 
-        std::unordered_map<std::size_t, Agent*> m_agents;
-
+        std::unordered_map<std::size_t, Agent *> m_agents;
     };
-
 }

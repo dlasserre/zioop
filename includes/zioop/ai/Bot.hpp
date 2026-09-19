@@ -21,6 +21,17 @@ namespace ai {
             core::Direction::WEST
         };
 
+        struct Decision {
+            std::size_t id{0};
+
+            network::Protocol::MessageType command;
+            nlohmann::json parameters;
+
+            std::optional<network::Protocol::Response> response;
+
+            std::string reason;
+        };
+
         Bot(std::string ip, std::uint16_t port);
 
         virtual ~Bot();
@@ -34,7 +45,8 @@ namespace ai {
         std::size_t m_agentId{0};
 
         // Methods
-        [[nodiscard]] virtual std::string_view getName() const = 0;
+        [[nodiscard]]
+        virtual std::string_view getName() const = 0;
 
         virtual void think(
             const network::Protocol::Response& response
@@ -45,9 +57,14 @@ namespace ai {
             const std::string &payload
         ) const final;
 
-        [[nodiscard]] std::size_t getAgentId() const {
+        [[nodiscard]]
+        std::size_t getAgentId() const {
             return m_agentId;
         }
+
+        void addHistory(Decision decision);
+        [[nodiscard]]
+        std::optional<Decision> lastDecision() const;
 
     private:
 
@@ -59,6 +76,7 @@ namespace ai {
         std::mutex m_mutex{};
         bool m_thinkStopped{false};
         std::condition_variable m_responseAvailable;
+        std::deque<Decision> m_history{};
 
         void connect() const;
         void disconnect();

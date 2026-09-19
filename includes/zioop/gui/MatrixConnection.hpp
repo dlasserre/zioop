@@ -26,10 +26,17 @@ namespace gui {
             Vector3 position{};
         };
 
+        struct ResourceView {
+            int type{};
+            int rotting{};
+            Vector3 position{};
+        };
+
         struct MatrixSnapshot {
             std::size_t width{};
             std::size_t height{};
             std::map<std::size_t, AgentView> agents;
+            std::vector<ResourceView> resources;
         };
 
         MatrixConnection();

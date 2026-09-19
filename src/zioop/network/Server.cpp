@@ -29,6 +29,71 @@ namespace network {
 
             return ip;
         }
+
+        nlohmann::json serializeResources(const core::Matrix &matrix) {
+            nlohmann::json resources = nlohmann::json::array();
+
+            for (const auto &column: matrix.getMatrix()) {
+                for (const auto &cell: column) {
+                    const auto position = cell.getPosition();
+                    for (auto &resource: cell.getResources()) {
+                        resources.push_back({
+                            {"type", static_cast<int>(resource->getType())},
+                            {"rotting", resource->getRotting()},
+                            {
+                                "position", {
+                                    {"x", position.x},
+                                    {"y", position.y}
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+
+            return resources;
+        }
+
+        nlohmann::json serializeAgents(const core::Matrix &matrix) {
+            nlohmann::json agents = nlohmann::json::array();
+
+
+            for (const auto &[id, agent]: matrix.getAgents()) {
+                const auto *cell = agent->getCell();
+                if (!cell) {
+                    continue;
+                }
+
+                agents.push_back({
+                    {"agentId", id},
+                    {
+                        "position", {
+                            {"x", cell->getPosition().x},
+                            {"y", cell->getPosition().y},
+                        }
+                    }
+                });
+            }
+
+            return agents;
+        }
+
+        nlohmann::json serializeMatrix(const core::Matrix &matrix) {
+            return {
+                {
+                    "matrix", {
+                        {"xSize", matrix.getSizeX()},
+                        {"ySize", matrix.getSizeY()},
+                        {
+                            "data", {
+                                {"resources", serializeResources(matrix)},
+                                {"agents", serializeAgents(matrix)}
+                            }
+                        }
+                    }
+                }
+            };
+        }
     }
 
     Server::Server(
@@ -60,7 +125,7 @@ namespace network {
     }
 
     void Server::processDisconnections() {
-        std::queue<Connection*> pending;
+        std::queue<Connection *> pending;
         {
             std::lock_guard<std::mutex> lock(m_disconnectionsMutex);
             pending.swap(m_disconnections);
@@ -77,7 +142,7 @@ namespace network {
                 const auto it = m_sessions.find(connection);
 
                 if (it != m_sessions.end()) {
-                    for (const auto& [id, agent] : it->second->getAgents()) {
+                    for (const auto &[id, agent]: it->second->getAgents()) {
                         m_matrix.removeAgent(*agent);
                     }
 
@@ -90,7 +155,7 @@ namespace network {
                 m_connections.end(),
                 [connection](const auto &value) {
                     return value.get() == connection;
-            });
+                });
             if (it != m_connections.end()) {
                 m_connections.erase(it);
             }
@@ -190,8 +255,8 @@ namespace network {
             std::optional<core::Position> position;
             {
                 std::lock_guard<std::mutex> lock(m_stateMutex);
-                if (auto* session = getClientSession(connection)) {
-                    if (auto* agent = session->getAgent(agentID)) {
+                if (auto *session = getClientSession(connection)) {
+                    if (auto *agent = session->getAgent(agentID)) {
                         position = m_matrix.moveAgent(*agent, direction);
                     }
                 }
@@ -228,50 +293,91 @@ namespace network {
         }
     }
 
+    void Server::lookingAt(
+        Connection &connection,
+        const Protocol::Message &message
+    ) {
+        const auto data = message.getData();
+
+        const auto agentID =
+                data.at("agentID").get<std::size_t>();
+
+        const auto direction = static_cast<core::Direction>(
+            data.at("direction").get<std::uint16_t>()
+        );
+
+        nlohmann::json payload = {
+            {"cells", nlohmann::json::array()}
+        };
+
+        bool found = false;
+
+        {
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+
+            if (auto *session = getClientSession(connection)) {
+                if (auto *agent = session->getAgent(agentID)) {
+                    if (const auto *agentCell = agent->getCell()) {
+                        found = true;
+
+                        const auto positions = m_matrix.getVisiblePositions(
+                            agentCell->getPosition(),
+                            direction,
+                            3
+                        );
+
+                        for (const auto &position: positions) {
+                            const auto *cell = m_matrix.getCell(position);
+                            if (!cell) {
+                                continue;
+                            }
+
+                            nlohmann::json cellJson = {
+                                {"position", {position.x, position.y}},
+                                {"resources", nlohmann::json::array()}
+                            };
+
+                            for (const auto &resource: cell->getResources()) {
+                                cellJson["resources"].push_back({
+                                    {"type", resource->getType()},
+                                    {"rotting", resource->getRotting()}
+                                });
+                            }
+
+                            payload["cells"].push_back(std::move(cellJson));
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!found) {
+            connection.send(Protocol::encode(
+                Protocol::ResponseType::KO,
+                "Agent or cell not found"
+            ));
+            return;
+        }
+
+        connection.send(Protocol::encode(
+            Protocol::ResponseType::OK,
+            payload.dump()
+        ));
+    }
+
     void Server::getMatrix(
         Connection &connection,
         const Protocol::Message &
     ) {
-
-        // @todo vérifier que la request vient bien de GUI et pas d'un client ( protection ports ).
-
-        nlohmann::json matrix;
+        nlohmann::json payload;
         {
-            // Copier un etat coherent avant de relacher le verrou et d'envoyer.
             std::lock_guard<std::mutex> lock(m_stateMutex);
-            nlohmann::json agents = nlohmann::json::array();
-
-            for (const auto& [id, agent] : m_matrix.getAgents()) {
-                const auto* cell = agent->getCell();
-                if (!cell) {
-                    continue;
-                }
-
-                agents.push_back({
-                    {"agentId", id},
-                    {"position", {
-                        {"x", cell->getPosition().x},
-                        {"y", cell->getPosition().y},
-                    }}
-                });
-            }
-
-            matrix = {
-                {"matrix", {
-                    {"xSize", m_matrix.getSizeX()},
-                    {"ySize", m_matrix.getSizeY()},
-                    {"data", {
-                        {"resources", nlohmann::json::array()},
-                        {"agents", agents}
-                    }}
-                }}
-            };
+            payload = serializeMatrix(m_matrix);
         }
-
         connection.send(
             Protocol::encode(
                 Protocol::ResponseType::OK,
-                matrix.dump()
+                payload.dump()
             )
         );
     }
@@ -404,6 +510,7 @@ namespace network {
             {Type::MOVE, &Server::move},
             {Type::GET_MATRIX, &Server::getMatrix},
             {Type::DISCONNECT, &Server::disconnect},
+            {Type::LOOK, &Server::lookingAt},
         };
 
         const auto it = handlers.find(message.header.type);

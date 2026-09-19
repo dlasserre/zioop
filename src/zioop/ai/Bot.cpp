@@ -113,6 +113,17 @@ namespace ai {
         }
     }
 
+    std::optional<Bot::Decision> Bot::lastDecision() const {
+        if (m_history.empty()) {
+            return std::nullopt;
+        }
+        return m_history.back();
+    }
+
+    void Bot::addHistory(Decision decision) {
+        m_history.push_back(std::move(decision));
+    }
+
     network::Protocol::Response Bot::receiveResponse() const {
         using Protocol = network::Protocol;
 
@@ -180,6 +191,7 @@ namespace ai {
                 network::Protocol::MessageType::HELLO,
                 "Hello from new client (" + std::string(getName()) + ").\n"
             );
+
             network::Protocol::Response response = receiveResponse();
             if (response.header.type != network::Protocol::ResponseType::OK) {
                 throw std::runtime_error(response.payload);

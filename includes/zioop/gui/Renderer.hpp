@@ -15,6 +15,8 @@ namespace zioop {
 }
 
 namespace gui {
+    using Clock = std::chrono::steady_clock;
+
     class Renderer {
     public:
 
@@ -23,7 +25,14 @@ namespace gui {
             float animationTimer{0.0f};
         };
 
-        struct AgentVisual {
+        struct  PanelInformation {
+            bool connected = false;
+            std::chrono::time_point<Clock> nextRequest = Clock::now();
+            std::chrono::time_point<Clock> lastUpdate = Clock::now();
+            std::string status{};
+        };
+
+        struct ModelRender {
             Model               model{};
             ModelAnimation*     animations{};
             int                 animationCount{};
@@ -31,6 +40,14 @@ namespace gui {
             float               baseY{0.0f};
             int                 currentAnimation{0};
             bool                modelReady{false};
+        };
+
+        struct AgentMotion {
+            Vector3 from{};
+            Vector3 current{};
+            Vector3 target{};
+            float elapsed{0.0f};
+            float rotation = 0.0f;
         };
 
         Renderer(
@@ -49,20 +66,16 @@ namespace gui {
 
         void drawWorld();
 
-        [[nodiscard]] AgentVisual &getModel() {
-            return m_agentVisual;
-        }
-
         ~Renderer();
 
     private:
-        void updateNetwork();
+        void updateMatrix(bool& hasSnapshot, Clock::time_point& nextReques);
 
-        void updateCamera();
+        void DrawAgents();
 
-        void updateAnimations();
+        void DrawResources() const;
 
-        void drawUI();
+        void DrawGround();
 
         int m_width{1}, m_height{1};
         std::string m_title{};
@@ -76,12 +89,23 @@ namespace gui {
 
         Information m_information{};
 
-        AgentVisual m_agentVisual{};
-
         MatrixConnection m_connection{};
 
         MatrixConnection::MatrixSnapshot m_matrix;
 
         std::future<MatrixConnection::MatrixSnapshot> m_matrixRequest;
+
+        ModelRender m_agentModel{};
+        ModelRender m_resourceModel{};
+
+        PanelInformation m_panelInformation{};
+
+        void updateAgentMotions(float deltaTime);
+
+        ::Model m_groundModel{};
+
+        Texture2D m_groundTexture{};
+
+        std::unordered_map<std::size_t, AgentMotion> m_agentMotions;
     };
 }

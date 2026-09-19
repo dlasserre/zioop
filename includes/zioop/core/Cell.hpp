@@ -18,15 +18,18 @@ namespace core {
 
     class Cell {
     public:
-        [[nodiscard]] bool isFull() const;
+        [[nodiscard]]
+        bool isFull() const;
 
-        [[nodiscard]] bool empty() const;
+        [[nodiscard]]
+        bool empty() const;
 
         bool emplace(Agent &agent);
 
         bool remove(const Agent &agent);
 
-        [[nodiscard]] Position getPosition() const {
+        [[nodiscard]]
+        Position getPosition() const {
             return {m_pos.x, m_pos.y};
         }
 
@@ -34,7 +37,13 @@ namespace core {
             this->m_pos = position;
         }
 
-        [[nodiscard]] bool contains(const Agent &agent);
+        [[nodiscard]]
+        bool contains(const Agent &agent);
+
+        [[nodiscard]]
+        const std::vector<std::unique_ptr<Resource>>& getResources() const {
+            return m_resources;
+        }
 
         std::unique_ptr<Resource> take(ResourceType type);
 
