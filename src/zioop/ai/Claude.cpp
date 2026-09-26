@@ -4,69 +4,140 @@
 
 #include <iostream>
 #include <random>
-#include <chrono>
+#include <optional>
+#include <cstdint>
 
 namespace ai {
 
+void Claude::think(
+    const network::Protocol::Response& response
+) {
+    using Protocol = network::Protocol;
+    using MessageType = Protocol::MessageType;
+    using ResponseType = Protocol::ResponseType;
 
-    void Claude::think(
-        const network::Protocol::Response &response
-    ) {
-        using Protocol = network::Protocol;
+    static thread_local std::mt19937 generator{
+        std::random_device{}()
+    };
 
-        const auto parsed = nlohmann::json::parse(response.payload);
-        // std::cout << parsed.dump() << std::endl;
+    const auto previously = getPreviously();
 
-        std::mt19937 generator(std::random_device{}());
-        std::uniform_int_distribution<std::size_t> chooseDirection(0, directions.size() - 1);
+    const auto getRandomDirection = [&] {
+        std::uniform_int_distribution<std::size_t> distribution(
+            0,
+            directions.size() - 1
+        );
 
-        const auto direction = directions[chooseDirection(generator)];
+        return directions[distribution(generator)];
+    };
 
-        const nlohmann::json movePayload = {
-            {"agentID", getAgentId()},
-            {"direction", static_cast<std::uint16_t>(direction)}
-        };
+    if (!getPreviously()) {
+        move(getRandomDirection());
+        return;
+    }
 
-        if (Protocol::ResponseType::OK != response.header.type) {
-            std::cerr << "ERROR: " << response.payload << std::endl;
-            throw std::runtime_error("ERROR: " + response.payload);
+    if (response.header.type != ResponseType::OK) {
+        std::cerr
+            << "KO: "
+            << response.payload
+            << " | Previous command: "
+            << static_cast<int>(previously->command)
+            << std::endl;
+
+        if (previously->command == MessageType::MOVE) {
+            move(getRandomDirection());
+            return;
         }
 
-        auto previously = lastDecision();
+        move(getRandomDirection());
+        return;
+    }
+
+    if (previously->command == MessageType::MOVE) {
+        look(getRandomDirection());
+        return;
+    }
+
+    if (previously->command == MessageType::LOOK) {
+
+        nlohmann::json observation;
+
+        try {
+            observation =
+                nlohmann::json::parse(response.payload);
+
+        } catch (const nlohmann::json::exception& error) {
+            std::cerr
+                << "Invalid LOOK response: "
+                << error.what()
+                << std::endl;
+
+            move(getRandomDirection());
+            return;
+        }
 
         if (
-            !previously ||
-            previously->command == Protocol::MessageType::LOOK
+            !observation.contains("cells") ||
+            !observation["cells"].is_array()
         ) {
-            std::cout << "Looking..." << std::endl;
-            sendCommand(
-                Protocol::MessageType::MOVE,
-                movePayload.dump()
-            );
+            std::cerr
+                << "LOOK response has no valid cells array"
+                << std::endl;
 
-            addHistory({
-                .id = (!previously) ? 1 : previously->id + 1,
-                .command = Protocol::MessageType::MOVE,
-                .parameters = movePayload,
-                .response = response,
-                .reason = ""
-            });
-        } else {
-            std::cout << "Moving..." << std::endl;
-            sendCommand(
-                Protocol::MessageType::LOOK,
-                movePayload.dump()
-            );
-            addHistory({
-                .id = (!previously) ? 1 : previously->id + 1,
-                .command = Protocol::MessageType::LOOK,
-                .parameters = movePayload,
-                .response = response,
-                .reason = ""
-            });
+            move(getRandomDirection());
+            return;
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        for (const auto& cell : observation["cells"]) {
+
+            if (
+                !cell.contains("resources") ||
+                !cell["resources"].is_array()
+            ) {
+                continue;
+            }
+
+            const auto& resources = cell["resources"];
+
+            if (resources.empty()) {
+                continue;
+            }
+
+            const auto& resource = resources.front();
+
+            if (
+                !resource.contains("type") ||
+                !resource["type"].is_number_integer()
+            ) {
+                continue;
+            }
+
+            const auto type =
+                resource["type"].get<int>();
+
+            take(type);
+
+            return;
+        }
+
+        std::cout
+            << "No resources found."
+            << std::endl;
+
+        move(getRandomDirection());
+        return;
     }
+
+    if (previously->command == MessageType::TAKE) {
+
+        std::cout
+            << "Resource collected."
+            << std::endl;
+        inventory();
+        return;
+    }
+
+    move(getRandomDirection());
+}
 
 }

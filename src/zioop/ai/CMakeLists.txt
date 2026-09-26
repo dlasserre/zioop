@@ -25,8 +25,13 @@ if(ZIOOP_BUILD_AI)
     target_link_libraries(
             zioop_ai_lib
             PUBLIC
+            zioop_protocol
             nlohmann_json::nlohmann_json
             PRIVATE
             zioop_flags
     )
+
+    if(WIN32)
+        target_link_libraries(zioop_ai_lib PRIVATE ws2_32)
+    endif()
 endif()

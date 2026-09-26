@@ -1,0 +1,428 @@
+{
+  "asset": {
+    "generator": "glTF-Transform v4.2.1",
+    "version": "2.0"
+  },
+  "accessors": [
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 480,
+      "max": [
+        0.24234262108802795,
+        1.3052678108215332,
+        0.21610262989997864
+      ],
+      "min": [
+        -0.2331269234418869,
+        0.5721422433853149,
+        -0.1754840910434723
+      ],
+      "bufferView": 0,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 480,
+      "bufferView": 0,
+      "byteOffset": 12
+    },
+    {
+      "type": "SCALAR",
+      "componentType": 5123,
+      "count": 480,
+      "bufferView": 1,
+      "byteOffset": 0
+    },
+    {
+      "type": "SCALAR",
+      "componentType": 5123,
+      "count": 4074,
+      "bufferView": 1,
+      "byteOffset": 960
+    },
+    {
+      "type": "SCALAR",
+      "componentType": 5123,
+      "count": 588,
+      "bufferView": 1,
+      "byteOffset": 9108
+    },
+    {
+      "type": "SCALAR",
+      "componentType": 5123,
+      "count": 444,
+      "bufferView": 1,
+      "byteOffset": 10284
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 2788,
+      "max": [
+        0.4234151840209961,
+        1.719962239265442,
+        0.47352874279022217
+      ],
+      "min": [
+        -0.3697659969329834,
+        -0.00014108078903518617,
+        -0.3364730179309845
+      ],
+      "bufferView": 2,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 2788,
+      "bufferView": 2,
+      "byteOffset": 12
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 388,
+      "max": [
+        0.0889834463596344,
+        0.08466020226478577,
+        0.08898396790027618
+      ],
+      "min": [
+        -0.08898543566465378,
+        -0.0530368834733963,
+        -0.0889848917722702
+      ],
+      "bufferView": 3,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 388,
+      "bufferView": 3,
+      "byteOffset": 12
+    },
+    {
+      "type": "VEC2",
+      "componentType": 5126,
+      "count": 388,
+      "bufferView": 3,
+      "byteOffset": 24
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 292,
+      "max": [
+        0.07032721489667892,
+        0.09510762244462967,
+        0.07920094579458237
+      ],
+      "min": [
+        -0.08010190725326538,
+        0.03904061019420624,
+        -0.07268884032964706
+      ],
+      "bufferView": 4,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 292,
+      "bufferView": 4,
+      "byteOffset": 12
+    },
+    {
+      "type": "VEC2",
+      "componentType": 5126,
+      "count": 292,
+      "bufferView": 4,
+      "byteOffset": 24
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 2788,
+      "max": [
+        0.4234151244163513,
+        1.719962239265442,
+        0.4735301733016968
+      ],
+      "min": [
+        -0.3697660565376282,
+        -0.00014099106192588806,
+        -0.3364715874195099
+      ],
+      "bufferView": 5,
+      "byteOffset": 0
+    },
+    {
+      "type": "VEC3",
+      "componentType": 5126,
+      "count": 2788,
+      "bufferView": 5,
+      "byteOffset": 12
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 11520,
+      "byteStride": 24,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 11520,
+      "byteLength": 11172,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 22692,
+      "byteLength": 66912,
+      "byteStride": 24,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 89604,
+      "byteLength": 12416,
+      "byteStride": 32,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 102020,
+      "byteLength": 9344,
+      "byteStride": 32,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 111364,
+      "byteLength": 66912,
+      "byteStride": 24,
+      "target": 34962
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "buffer.bin",
+      "byteLength": 178276
+    }
+  ],
+  "materials": [
+    {
+      "name": "Red.006",
+      "doubleSided": true,
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.1679462343454361,
+          0.042524710297584534,
+          0.017704226076602936,
+          1
+        ],
+        "roughnessFactor": 0.690034806728363,
+        "metallicFactor": 0
+      }
+    },
+    {
+      "name": "Green.013",
+      "doubleSided": true,
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.23164623975753784,
+          0.44797465205192566,
+          0.12646017968654633,
+          1
+        ],
+        "roughnessFactor": 0.690034806728363,
+        "metallicFactor": 0
+      }
+    },
+    {
+      "name": "Red.007",
+      "alphaMode": "MASK",
+      "alphaCutoff": 0.5,
+      "doubleSided": true,
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.1679462343454361,
+          0.042524710297584534,
+          0.017704226076602936,
+          0
+        ],
+        "roughnessFactor": 0.690034806728363,
+        "metallicFactor": 0
+      }
+    },
+    {
+      "name": "DarkGreen.011",
+      "alphaMode": "MASK",
+      "alphaCutoff": 0.5,
+      "doubleSided": true,
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.1471814215183258,
+          0.1679467111825943,
+          0.09200603514909744,
+          0
+        ],
+        "roughnessFactor": 0.690034806728363,
+        "metallicFactor": 0
+      }
+    },
+    {
+      "name": "Green.014",
+      "alphaMode": "MASK",
+      "alphaCutoff": 0.5,
+      "doubleSided": true,
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.23164623975753784,
+          0.44797465205192566,
+          0.12646017968654633,
+          0
+        ],
+        "roughnessFactor": 0.690034806728363,
+        "metallicFactor": 0
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1
+          },
+          "mode": 4,
+          "material": 0,
+          "indices": 2
+        }
+      ]
+    },
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 6,
+            "NORMAL": 7
+          },
+          "mode": 4,
+          "material": 1,
+          "indices": 3
+        }
+      ]
+    },
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 8,
+            "NORMAL": 9,
+            "TEXCOORD_0": 10
+          },
+          "mode": 4,
+          "material": 2,
+          "indices": 4
+        }
+      ]
+    },
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 11,
+            "NORMAL": 12,
+            "TEXCOORD_0": 13
+          },
+          "mode": 4,
+          "material": 3,
+          "indices": 5
+        }
+      ]
+    },
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 14,
+            "NORMAL": 15
+          },
+          "mode": 4,
+          "material": 4,
+          "indices": 3
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "Scene",
+      "children": [
+        1,
+        4,
+        7
+      ]
+    },
+    {
+      "name": "Tomato_4",
+      "extras": {
+        "name": "Tomato_4"
+      },
+      "children": [
+        2,
+        3
+      ]
+    },
+    {
+      "name": "Icosphere013",
+      "mesh": 0
+    },
+    {
+      "name": "Icosphere013_1",
+      "mesh": 1
+    },
+    {
+      "name": "Tomato_Crop",
+      "extras": {
+        "name": "Tomato_Crop"
+      },
+      "children": [
+        5,
+        6
+      ]
+    },
+    {
+      "name": "Cube025",
+      "mesh": 2
+    },
+    {
+      "name": "Cube025_1",
+      "mesh": 3
+    },
+    {
+      "name": "Tomato_Harvested",
+      "extras": {
+        "name": "Tomato_Harvested"
+      },
+      "mesh": 4
+    }
+  ],
+  "scenes": [
+    {
+      "name": "AuxScene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "scene": 0
+}

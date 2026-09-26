@@ -6,13 +6,11 @@
 #include <mutex>
 #include <string>
 #include <vector>
-#include <unordered_map>
 #include <queue>
 
 #include <winsock2.h>
 
-#include "zioop/network/ClientSession.hpp"
-#include "zioop/core/Matrix.hpp"
+#include "zioop/core/Game.hpp"
 #include "zioop/network/Connection.hpp"
 #include "zioop/network/Protocol.hpp"
 
@@ -49,10 +47,6 @@ namespace network {
             const Protocol::Message &
         );
 
-        ClientSession* getClientSession(
-            Connection &connection
-        );
-
         void handleFrame(
             Connection &connection,
             const Protocol::Frame &frame
@@ -83,40 +77,46 @@ namespace network {
             const Protocol::Message &message
         );
 
+        void take(
+            Connection &connection,
+            const Protocol::Message &message
+        );
+
         void disconnect(
             Connection &connection,
             const Protocol::Message &message
         );
 
-        std::unordered_map<
-            Connection *,
-            std::unique_ptr<ClientSession>
-        > m_sessions;
+
+        void inventory(
+            Connection &connection,
+            const Protocol::Message &message
+        );
+
+        void ritual(
+            Connection &connection,
+            const Protocol::Message &message
+        );
+
+        void attack(
+            Connection &connection,
+            const Protocol::Message &message
+        );
 
         std::mutex m_stateMutex;
 
-        struct AgentPlacement {
-            std::size_t agentId;
-            core::Position position;
-        };
-
-        std::optional<AgentPlacement> addAgent(
-            ClientSession& session,
-            core::ANGLE angle
-        );
-
-        core::Matrix m_matrix;
-
+        core::Game m_game;
         std::atomic_bool m_running{false};
 
         std::string m_address;
         std::uint16_t m_port{};
 
         std::mutex m_disconnectionsMutex;
-        std::queue<Connection*> m_disconnections;
+        std::queue<Connection *> m_disconnections;
 
         SOCKET m_socket{INVALID_SOCKET};
 
-        std::vector<std::unique_ptr<Connection>> m_connections;
+        std::size_t m_nextClientId{0};
+        std::vector<std::shared_ptr<Connection> > m_connections;
     };
 }

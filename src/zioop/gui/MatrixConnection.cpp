@@ -21,7 +21,6 @@ namespace gui {
         MatrixConnection::MatrixSnapshot snapshot;
         snapshot.width = readUnsigned(matrix.at("xSize"));
         snapshot.height = readUnsigned(matrix.at("ySize"));
-        // Limiter le nombre de cases a dessiner dans cette premiere version.
         if (snapshot.width == 0 || snapshot.height == 0 ||
             snapshot.width > 65536 / snapshot.height) {
             throw std::runtime_error("Invalid or too large matrix dimensions");
@@ -38,30 +37,31 @@ namespace gui {
             MatrixConnection::AgentView agent;
             agent.x = readUnsigned(position.at("x"));
             agent.y = readUnsigned(position.at("y"));
-            if (agent.x >= snapshot.width || agent.y >= snapshot.height) {
+            const auto subCell = readUnsigned(entry.at("subCell"));
+            if (agent.x >= snapshot.width || agent.y >= snapshot.height ||
+                subCell >= CELL_OFFSETS.size()) {
                 throw std::runtime_error("Agent position outside the matrix");
             }
-            if (!snapshot.agents.emplace(id, agent).second) {
-                throw std::runtime_error("Duplicate agent ID in GET_MATRIX");
-            }
-        }
-
-        // L'ordre des IDs reste stable meme si le JSON arrive dans un autre ordre.
-        std::map<std::pair<std::size_t, std::size_t>, std::size_t> occupants;
-        for (auto &[id, agent]: snapshot.agents) {
-            auto &slot = occupants[{agent.x, agent.y}];
-            if (slot >= CELL_OFFSETS.size()) {
-                throw std::runtime_error("More than four agents in one cell");
-            }
-            const auto offset = CELL_OFFSETS[slot++];
+            const auto offset = CELL_OFFSETS[subCell];
             agent.position = {
                 (static_cast<float>(agent.x) + offset.x) * zioop::CELL_SIZE,
                 0.05f,
                 (static_cast<float>(agent.y) + offset.y) * zioop::CELL_SIZE
             };
+            // Absents tant que le serveur n'envoie pas les actions : pas d'animation d'action.
+            if (entry.contains("actionCount")) {
+                agent.action = entry.at("action").get<std::string>();
+                agent.actionCount = readUnsigned(entry.at("actionCount"));
+            }
+            // Absents tant que le serveur ne les envoie pas : pas d'animation de rituel.
+            if (entry.contains("level")) {
+                agent.level = readUnsigned(entry.at("level"));
+                agent.ritual = entry.at("ritual").get<bool>();
+            }
+            if (!snapshot.agents.emplace(id, agent).second) {
+                throw std::runtime_error("Duplicate agent ID in GET_MATRIX");
+            }
         }
-
-        std::map<std::pair<std::size_t, std::size_t>, std::size_t> resourceSlots;
 
         const auto& resources = matrix.at("data").at("resources");
 
@@ -73,29 +73,25 @@ namespace gui {
             const auto& position = entry.at("position");
             const auto x = readUnsigned(position.at("x"));
             const auto y = readUnsigned(position.at("y"));
+            const auto subCell = readUnsigned(entry.at("subCell"));
 
-            if (x >= snapshot.width || y >= snapshot.height) {
+            if (x >= snapshot.width || y >= snapshot.height ||
+                subCell >= CELL_OFFSETS.size()) {
                 throw std::runtime_error("Resource outside the matrix");
             }
 
-            // Décaler les fruits d'une même case pour les distinguer.
-            const auto slot = resourceSlots[{x, y}]++;
-            const float offsetX =
-                (static_cast<float>(slot % 3) - 1.0f) * 0.22f;
-            const float offsetZ =
-                static_cast<float>(slot / 3) * 0.22f;
+            const auto offset = CELL_OFFSETS[subCell];
 
             snapshot.resources.push_back({
                 .type = entry.at("type").get<int>(),
                 .rotting = entry.at("rotting").get<int>(),
                 .position = {
-                    (static_cast<float>(x) + offsetX) * zioop::CELL_SIZE,
+                    (static_cast<float>(x) + offset.x) * zioop::CELL_SIZE,
                     0.12f,
-                    (static_cast<float>(y) + offsetZ) * zioop::CELL_SIZE
+                    (static_cast<float>(y) + offset.y) * zioop::CELL_SIZE
                 }
             });
         }
-
 
         return snapshot;
     }

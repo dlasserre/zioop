@@ -1,0 +1,6 @@
+add_executable(zioop_ritual_tests RitualTests.cpp)
+target_link_libraries(zioop_ritual_tests PRIVATE zioop_core zioop_flags)
+add_test(NAME ritual COMMAND zioop_ritual_tests)
+
+add_executable(zioop_ritual_server RitualTestServer.cpp)
+target_link_libraries(zioop_ritual_server PRIVATE zioop_network zioop_core zioop_flags)

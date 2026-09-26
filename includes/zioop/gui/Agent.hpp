@@ -4,8 +4,6 @@
 
 #include <raylib.h>
 
-#include "zioop/core/Agent.hpp"
-
 namespace gui {
 
     class Agent {
@@ -17,16 +15,6 @@ namespace gui {
         // Pas de copie
         Agent(const Agent&) = delete;
         Agent& operator=(const Agent&) = delete;
-
-        [[nodiscard]]
-        core::Agent& getAgent() {
-            return m_agent;
-        }
-
-        [[nodiscard]]
-        const core::Agent& getAgent() const {
-            return m_agent;
-        }
 
         [[nodiscard]]
         Model& getModel() {
@@ -49,8 +37,6 @@ namespace gui {
         }
 
     private:
-        core::Agent m_agent;
-
         Model m_model{};
 
         ModelAnimation* m_animations{nullptr};

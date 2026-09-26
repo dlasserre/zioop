@@ -3,6 +3,7 @@
 #include <iostream>
 #include <string>
 #include <algorithm>
+#include <set>
 
 namespace gui {
     using Clock = std::chrono::steady_clock;
@@ -40,6 +41,30 @@ namespace gui {
         mesh.modelReady = modelReady;
     }
 
+    static int FindAnimation(
+        const Renderer::ModelRender &mesh,
+        const std::string_view name
+    ) {
+        if (mesh.animationCount == 0) {
+            return -1;
+        }
+
+        for (int i = 0; i < mesh.animationCount; ++i) {
+            const ModelAnimation &animation = mesh.animations[i];
+
+            if (
+                std::string_view(animation.name) == name &&
+                animation.frameCount > 0 &&
+                IsModelAnimationValid(mesh.model, animation)
+            ) {
+                return i;
+            }
+        }
+
+        std::cerr << "Animation '" << name << "' not found or invalid\n";
+        return -1;
+    }
+
     static void LoadModel(
         Renderer::ModelRender &mesh,
         const std::string &name
@@ -64,8 +89,41 @@ namespace gui {
                     asset.c_str(),
                     &mesh.animationCount
                 );
-        mesh.currentAnimation = 0;
+
+        mesh.walkAnimation = FindAnimation(mesh, "Walk");
+        mesh.idleAnimation = FindAnimation(mesh, "Idle");
+        mesh.attackAnimation = FindAnimation(mesh, "Bite_Front");
+        mesh.takeAnimation = FindAnimation(mesh, "Bite_InPlace");
+        mesh.ritualAnimation = FindAnimation(mesh, "Dance");
+        mesh.levelUpAnimation = FindAnimation(mesh, "Jump");
+        mesh.deathAnimation = FindAnimation(mesh, "Death");
+
         GroundMesh(mesh);
+    }
+
+    static int ActionAnimation(
+        const Renderer::ModelRender &mesh,
+        const std::string &action
+    ) {
+        if (action == "ATTACK") {
+            return mesh.attackAnimation;
+        }
+        if (action == "TAKE") {
+            return mesh.takeAnimation;
+        }
+        return -1;
+    }
+
+    // Joue une animation une seule fois ; la relance si elle est déjà en cours.
+    static void PlayOnce(Renderer::AgentMotion &motion, const int animation) {
+        if (animation < 0) {
+            return;
+        }
+        motion.actionAnimation = animation;
+        if (motion.animation == animation) {
+            motion.frame = 0;
+            motion.animationTimer = 0.0f;
+        }
     }
 
     Renderer::Renderer(
@@ -96,6 +154,7 @@ namespace gui {
                 .texture = m_groundTexture;
 
         LoadModel(agentModelRender, "Alien.gltf");
+
         LoadModel(resourceModelRender, "fruit.gltf");
 
         DisableCursor();
@@ -108,10 +167,13 @@ namespace gui {
         for (const auto &[id, agent]: matrix.agents) {
             const auto it = m_agentMotions.find(id);
 
-            const Vector3 visualPosition =
+            const AgentMotion *motion =
                     it != m_agentMotions.end()
-                        ? it->second.current
-                        : agent.position;
+                        ? &it->second
+                        : nullptr;
+
+            const Vector3 visualPosition =
+                    motion ? motion->current : agent.position;
 
             const Color color = ColorFromHSV(
                 static_cast<float>((id % 12) * 30),
@@ -130,10 +192,15 @@ namespace gui {
             if (model.modelReady) {
                 position.y += model.baseY;
 
-                const float rotation =
-                    it != m_agentMotions.end()
-                        ? it->second.rotation
-                        : 0.0f;
+                const float rotation = motion ? motion->rotation : 0.0f;
+
+                if (motion && motion->animation >= 0) {
+                    UpdateModelAnimation(
+                        model.model,
+                        model.animations[motion->animation],
+                        motion->frame
+                    );
+                }
 
                 DrawModelEx(
                     model.model,
@@ -146,6 +213,29 @@ namespace gui {
             } else {
                 position.y += 0.2f;
                 DrawCube(position, 0.25f, 0.4f, 0.25f, color);
+            }
+        }
+
+        // Cadavres : pose finale de Death, assombris et sans disque de couleur.
+        if (model.modelReady && model.deathAnimation >= 0) {
+            for (const auto &corpse: m_corpses) {
+                UpdateModelAnimation(
+                    model.model,
+                    model.animations[model.deathAnimation],
+                    corpse.frame
+                );
+
+                auto position = corpse.position;
+                position.y += model.baseY;
+
+                DrawModelEx(
+                    model.model,
+                    position,
+                    Vector3{0.0f, 1.0f, 0.0f},
+                    corpse.rotation,
+                    Vector3{model.scale, model.scale, model.scale},
+                    GRAY
+                );
             }
         }
     }
@@ -168,8 +258,12 @@ namespace gui {
         }
     }
 
-    void Renderer::updateAgentMotions(float deltaTime) {
+    void Renderer::updateAgentMotions(
+        ModelRender &model,
+        const float deltaTime
+    ) {
         constexpr float duration = 0.70f;
+        constexpr float frameDuration = 1.0f / 60.0f;
 
         for (auto &motion: m_agentMotions | std::views::values) {
             motion.elapsed += deltaTime;
@@ -185,6 +279,56 @@ namespace gui {
                 motion.from.y + (motion.target.y - motion.from.y) * t,
                 motion.from.z + (motion.target.z - motion.from.z) * t
             };
+
+            const bool moving = motion.elapsed < duration;
+            // Priorité : marche, animation ponctuelle, rituel, sinon idle.
+            int animation = model.idleAnimation;
+            if (moving) {
+                animation = model.walkAnimation;
+            } else if (motion.actionAnimation >= 0) {
+                animation = motion.actionAnimation;
+            } else if (motion.ritual && model.ritualAnimation >= 0) {
+                animation = model.ritualAnimation;
+            }
+
+            if (animation != motion.animation) {
+                motion.animation = animation;
+                motion.frame = 0;
+                motion.animationTimer = 0.0f;
+            }
+
+            if (animation < 0) {
+                continue;
+            }
+
+            const int frameCount = model.animations[animation].frameCount;
+            const bool playOnce = !moving && animation == motion.actionAnimation;
+
+            motion.animationTimer += deltaTime;
+
+            while (motion.animationTimer >= frameDuration) {
+                motion.animationTimer -= frameDuration;
+                if (playOnce && motion.frame + 1 >= frameCount) {
+                    motion.actionAnimation = -1; // Action terminée : retour à idle.
+                    break;
+                }
+                motion.frame = (motion.frame + 1) % frameCount;
+            }
+        }
+
+        // Les cadavres jouent Death une fois, puis restent sur la dernière image.
+        if (model.deathAnimation >= 0) {
+            const int lastFrame = model.animations[model.deathAnimation].frameCount - 1;
+            for (auto &corpse: m_corpses) {
+                if (corpse.frame >= lastFrame) {
+                    continue;
+                }
+                corpse.animationTimer += deltaTime;
+                while (corpse.frame < lastFrame && corpse.animationTimer >= frameDuration) {
+                    corpse.animationTimer -= frameDuration;
+                    ++corpse.frame;
+                }
+            }
         }
     }
 
@@ -207,6 +351,9 @@ namespace gui {
                         matrix.width != snapshot.width ||
                         matrix.height != snapshot.height;
 
+                // Cases où un agent vient d'attaquer : ceux qui y disparaissent sont morts.
+                std::set<std::pair<std::size_t, std::size_t>> attackCells;
+
                 for (const auto &[id, agent]: snapshot.agents) {
                     auto [it, inserted] = m_agentMotions.try_emplace(id);
                     auto &motion = it->second;
@@ -216,6 +363,8 @@ namespace gui {
                         motion.from = agent.position;
                         motion.target = agent.position;
                         motion.current = agent.position;
+                        // Ne pas rejouer une action faite avant l'arrivée de la GUI.
+                        motion.actionCount = agent.actionCount;
                     } else {
                         const auto &target = agent.position;
                         const bool move =
@@ -232,17 +381,53 @@ namespace gui {
                             motion.from = motion.current;
                             motion.target = target;
                             motion.elapsed = 0.0f;
+                            motion.frame = 0;
+                            motion.animationTimer = 0.0f;
+                        }
+
+                        if (agent.actionCount != motion.actionCount) {
+                            motion.actionCount = agent.actionCount;
+                            if (agent.action == "ATTACK") {
+                                attackCells.insert({agent.x, agent.y});
+                            }
+                            PlayOnce(motion, ActionAnimation(m_agentModel, agent.action));
+                        }
+
+                        // Niveau connu qui augmente : fin du rituel.
+                        if (motion.level > 0 && agent.level > motion.level) {
+                            PlayOnce(motion, m_agentModel.levelUpAnimation);
                         }
                     }
+                    motion.level = agent.level;
+                    motion.ritual = agent.ritual;
                 }
 
-                std::erase_if(m_agentMotions, [&snapshot](const auto &entry) {
-                    return snapshot.agents.find(entry.first) == snapshot.agents.end();
-                });
+                constexpr std::size_t MaxCorpses = 64;
+                for (auto it = m_agentMotions.begin(); it != m_agentMotions.end();) {
+                    if (snapshot.agents.contains(it->first)) {
+                        ++it;
+                        continue;
+                    }
+                    // Disparu pendant une attaque sur sa case : il est mort, on garde le cadavre.
+                    // Sinon c'est une déconnexion : il disparaît simplement.
+                    const auto previous = matrix.agents.find(it->first);
+                    if (previous != matrix.agents.end() &&
+                        attackCells.contains({previous->second.x, previous->second.y})) {
+                        m_corpses.push_back({
+                            .position = it->second.current,
+                            .rotation = it->second.rotation
+                        });
+                        if (m_corpses.size() > MaxCorpses) {
+                            m_corpses.erase(m_corpses.begin());
+                        }
+                    }
+                    it = m_agentMotions.erase(it);
+                }
 
                 matrix = std::move(snapshot);
 
                 if (resized) {
+                    m_corpses.clear(); // Nouvelle partie.
                     centerCamera(m_camera, matrix);
                 }
                 hasSnapshot = true;
@@ -267,7 +452,6 @@ namespace gui {
         }
 
         const float cellsize = zioop::CELL_SIZE;
-        // constexpr float thickness = 0.05f;
 
         // Un cube texturé par case.
         for (std::size_t x = 0; x < m_matrix.width; ++x) {
@@ -281,55 +465,19 @@ namespace gui {
                 DrawModel(m_groundModel, position, 1.0f, WHITE);
             }
         }
-
-        // const float minX = 0.0f - cellsize * 0.5f;
-        // const float maxX =
-        //     (static_cast<float>(m_matrix.width) - 0.5f) * cellsize;
-        //
-        // const float minZ = 0.0f - cellsize * 0.5f;
-        // const float maxZ =
-        //     (static_cast<float>(m_matrix.height) - 0.5f) * cellsize;
-        //
-        // constexpr float gridY = thickness * 0.5f + 0.002f;
-
-        // for (std::size_t x = 0; x < m_matrix.width; x++) {
-        //     const float worldX =
-        //         minX + static_cast<float>(x) * cellsize;
-        //     DrawLine3D(
-        //         Vector3(worldX, gridY, minZ),
-        //         Vector3(worldX, gridY, maxZ),
-        //         DARKGRAY
-        //     );
-        // }
-        //
-        // for (std::size_t y = 0; y < m_matrix.height; y++) {
-        //     const float worldZ =
-        //         minZ + static_cast<float>(y) * cellsize;
-        //     DrawLine3D(
-        //         Vector3(minX, gridY, worldZ),
-        //         Vector3(maxX, gridY, worldZ),
-        //         DARKGRAY
-        //     );
-        // }
     }
 
     void Renderer::drawWorld() {
         bool hasSnapshot = false;
-        // bool connected = false;
-        // std::string matrixStatus = "GET_MATRIX: waiting for server...";
         auto nextRequest = Clock::now();
-        // auto lastUpdate = Clock::now();
         auto &model = m_agentModel;
 
         while (!WindowShouldClose()) {
             const auto now = Clock::now();
-            // auto &matrixRequest = m_matrixRequest;
             auto &matrix = m_matrix;
-
-            // Update data every 250ms.
             updateMatrix(hasSnapshot, nextRequest);
 
-            updateAgentMotions(GetFrameTime());
+            updateAgentMotions(model, GetFrameTime());
 
             if (hasSnapshot && IsKeyPressed(KEY_R)) {
                 centerCamera(m_camera, matrix);
@@ -337,74 +485,15 @@ namespace gui {
 
             UpdateCamera(&m_camera, CAMERA_FREE);
 
-            // Une mise a jour de l'animation par image, quel que soit le nombre d'agents.
-            // if (
-            //     model.animations && model.animationCount > 0 &&
-            //     model.animations[model.currentAnimation].frameCount > 0 &&
-            //     IsModelAnimationValid(model.model, model.animations[model.currentAnimation])
-            // ) {
-            //     m_information.animationTimer += GetFrameTime();
-            //     while (m_information.animationTimer >= 1.0f / 60.0f) {
-            //         m_information.animationTimer -= 1.0f / 60.0f;
-            //         m_information.currentFrame =
-            //                 (m_information.currentFrame + 1) % model.animations[model.currentAnimation].frameCount;
-            //     }
-            //     UpdateModelAnimation(
-            //         model.model,
-            //         model.animations[model.currentAnimation],
-            //         m_information.currentFrame
-            //     );
-            // }
-
             BeginDrawing();
             ClearBackground(SKYBLUE);
             BeginMode3D(m_camera);
 
             DrawGround();
-
-            // for (std::size_t x = 0; x < matrix.width; ++x) {
-            //     for (std::size_t y = 0; y < matrix.height; ++y) {
-            //         const Vector3 position{
-            //             static_cast<float>(x) * zioop::CELL_SIZE, 0.0f,
-            //             static_cast<float>(y) * zioop::CELL_SIZE
-            //         };
-            //         DrawModel(
-            //             m_groundModel,
-            //             position,
-            //             1.0f,
-            //             WHITE
-            //         );
-            //         DrawCubeWires(position, zioop::CELL_SIZE, 0.05f, zioop::CELL_SIZE, DARKGRAY);
-            //     }
-            // }
             DrawAgents();
             DrawResources();
 
             EndMode3D();
-
-            // for (const auto &[id, agent]: matrix.agents) {
-            //     auto position = agent.position;
-            //     position.y += 0.55f;
-            //     // Ne pas projeter une etiquette situee derriere la camera.
-            //     const float depth = (position.x - m_camera.position.x) * (m_camera.target.x - m_camera.position.x) +
-            //                         (position.y - m_camera.position.y) * (m_camera.target.y - m_camera.position.y) +
-            //                         (position.z - m_camera.position.z) * (m_camera.target.z - m_camera.position.z);
-            //     if (depth > 0.0f) {
-            //         const auto screen = GetWorldToScreen(position, m_camera);
-            //         const std::string label = "#" + std::to_string(id);
-            //         DrawText(label.c_str(), static_cast<int>(screen.x) - MeasureText(label.c_str(), 14) / 2,
-            //                  static_cast<int>(screen.y), 14, DARKBLUE);
-            //     }
-            // }
-            // DrawRectangle(5, 5, 570, 115, Fade(RAYWHITE, 0.9f));
-            // DrawFPS(10, 10);
-            // DrawText(TextFormat("AGENTS: %zu | MATRIX: %zu x %zu", matrix.agents.size(), matrix.width, matrix.height),
-            //          10, 35, 20, DARKGRAY);
-            // DrawText(matrixStatus.c_str(), 10, 60, 18, connected ? DARKGREEN : MAROON);
-            // if (hasSnapshot) {
-            //     const auto age = std::chrono::duration<double>(now - lastUpdate).count();
-            //     DrawText(TextFormat("Last update: %.1f s | R: recenter | Esc: quit", age), 10, 85, 18, DARKGRAY);
-            // }
             EndDrawing();
         }
     }

@@ -45,35 +45,45 @@ namespace {
 #endif
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     registerSignalHandlers();
 
-    std::cout << "Server started\n";
-
-    network::Server server(
-        "127.0.0.1",
-        9090,
-        core::Matrix(20, 20)
-    );
-
-    std::thread serverThread([&server] {
-        std::cout << "Running server\n";
-        server.Start();
-    });
-
-    while (!stopRequested) {
-        const auto nextTick = std::chrono::steady_clock::now()
-                            + std::chrono::milliseconds(100);
-
-        server.processDisconnections();
-        server.tick();
-
-        std::this_thread::sleep_until(nextTick);
+    if (argc < 3) {
+        std::cerr << "Usage " << argv[0] << "<width> <height>\n";
+        return EXIT_FAILURE;
     }
-    std::cout << "Server stopped\n";
-    server.stop();
+    try {
+        int width = std::stoi(argv[1]);
+        int height = std::stoi(argv[2]);
 
-    serverThread.join();
+        network::Server server(
+            "127.0.0.1",
+            9090,
+            core::Matrix(width, height)
+        );
 
-    return EXIT_SUCCESS;
+        std::thread serverThread([&server] {
+            std::cout << "Running server\n";
+            server.Start();
+        });
+
+        while (!stopRequested) {
+            const auto nextTick =
+                    std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+
+            server.processDisconnections();
+            server.tick();
+
+            std::this_thread::sleep_until(nextTick);
+        }
+        std::cout << "Server stopped\n";
+        server.stop();
+
+        serverThread.join();
+
+        return EXIT_SUCCESS;
+    } catch (const std::invalid_argument &) {
+        std::cerr << "Invalid arguments, must be integer\n";
+        return EXIT_FAILURE;
+    }
 }

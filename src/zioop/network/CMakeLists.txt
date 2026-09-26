@@ -1,9 +1,17 @@
+add_library(zioop_protocol STATIC Protocol.cpp ${PROJECT_SOURCE_DIR}/includes/zioop/network/Protocol.hpp)
+
+target_include_directories(zioop_protocol PUBLIC ${PROJECT_SOURCE_DIR}/includes)
+target_link_libraries(zioop_protocol PUBLIC nlohmann_json::nlohmann_json PRIVATE zioop_flags)
+
+if(WIN32)
+    target_link_libraries(zioop_protocol PRIVATE ws2_32)
+endif()
+
 set(ZIOOP_NETWORK_SOURCES
         Server.cpp
         Connection.cpp
-        Protocol.cpp
         Client.cpp
-        ClientSession.cpp
+        Serialization.cpp
 )
 
 file(GLOB_RECURSE ZIOOP_NETWORK_HEADERS CONFIGURE_DEPENDS
@@ -28,6 +36,7 @@ target_link_libraries(
         PRIVATE
         zioop_flags
         PUBLIC
+        zioop_protocol
         nlohmann_json::nlohmann_json
 )
 

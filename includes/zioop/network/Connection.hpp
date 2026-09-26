@@ -7,6 +7,8 @@
 #include <vector>
 #include <cstddef>
 #include <functional>
+#include <mutex>
+#include <optional>
 #include <winsock2.h>
 
 #include "zioop/network/Protocol.hpp"
@@ -27,10 +29,15 @@ namespace network {
             std::string ip,
             std::uint16_t port,
             FrameHandler frameHandler,
-            DisconnectHandler disconnectHandler
+            DisconnectHandler disconnectHandler,
+            std::optional<std::size_t> clientId = std::nullopt
         );
 
         ~Connection();
+
+        [[nodiscard]] std::size_t getClientId() const {
+            return m_clientId.value();
+        }
 
         void send(const std::vector<std::byte>& data) const;
 
@@ -43,7 +50,10 @@ namespace network {
         void join();
 
     private:
-        SOCKET m_socket{INVALID_SOCKET};
+        const std::optional<std::size_t> m_clientId;
+        std::atomic<SOCKET> m_socket{INVALID_SOCKET};
+
+        mutable std::mutex m_sendMutex;
 
         std::string m_ip;
         std::uint16_t m_port{};

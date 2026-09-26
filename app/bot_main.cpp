@@ -1,7 +1,5 @@
 #include <iostream>
-#include <thread>
-#include <cstdlib>
-#include <functional>
+
 
 int main() {
 

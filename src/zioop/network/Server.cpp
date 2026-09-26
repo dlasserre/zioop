@@ -3,14 +3,15 @@
 #include <iostream>
 #include <stdexcept>
 #include <utility>
-
+#include <algorithm>
+#include <unordered_map>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <nlohmann/json.hpp>
 
-#include "zioop/network/Client.hpp"
 #include "zioop/network/Connection.hpp"
 #include "zioop/network/Protocol.hpp"
+#include "zioop/network/Serialization.hpp"
 
 
 namespace network {
@@ -30,69 +31,13 @@ namespace network {
             return ip;
         }
 
-        nlohmann::json serializeResources(const core::Matrix &matrix) {
-            nlohmann::json resources = nlohmann::json::array();
-
-            for (const auto &column: matrix.getMatrix()) {
-                for (const auto &cell: column) {
-                    const auto position = cell.getPosition();
-                    for (auto &resource: cell.getResources()) {
-                        resources.push_back({
-                            {"type", static_cast<int>(resource->getType())},
-                            {"rotting", resource->getRotting()},
-                            {
-                                "position", {
-                                    {"x", position.x},
-                                    {"y", position.y}
-                                }
-                            }
-                        });
-                    }
-                }
+        std::optional<core::ResourceType> parseResourceType(const int value) {
+            switch (value) {
+                case static_cast<int>(core::ResourceType::FRUIT):
+                    return core::ResourceType::FRUIT;
+                default:
+                    return std::nullopt;
             }
-
-            return resources;
-        }
-
-        nlohmann::json serializeAgents(const core::Matrix &matrix) {
-            nlohmann::json agents = nlohmann::json::array();
-
-
-            for (const auto &[id, agent]: matrix.getAgents()) {
-                const auto *cell = agent->getCell();
-                if (!cell) {
-                    continue;
-                }
-
-                agents.push_back({
-                    {"agentId", id},
-                    {
-                        "position", {
-                            {"x", cell->getPosition().x},
-                            {"y", cell->getPosition().y},
-                        }
-                    }
-                });
-            }
-
-            return agents;
-        }
-
-        nlohmann::json serializeMatrix(const core::Matrix &matrix) {
-            return {
-                {
-                    "matrix", {
-                        {"xSize", matrix.getSizeX()},
-                        {"ySize", matrix.getSizeY()},
-                        {
-                            "data", {
-                                {"resources", serializeResources(matrix)},
-                                {"agents", serializeAgents(matrix)}
-                            }
-                        }
-                    }
-                }
-            };
         }
     }
 
@@ -100,10 +45,9 @@ namespace network {
         std::string address,
         const std::uint16_t port,
         core::Matrix matrix
-    )
-        : m_matrix(std::move(matrix)),
-          m_address(std::move(address)),
-          m_port(port) {
+    ) : m_game(std::move(matrix)),
+        m_address(std::move(address)),
+        m_port(port) {
         WSADATA wsaData{};
 
         if (const int result =
@@ -136,84 +80,35 @@ namespace network {
             pending.pop();
             connection->join();
 
+            std::shared_ptr<Connection> disconnected;
             {
                 std::lock_guard<std::mutex> lock(m_stateMutex);
-
-                const auto it = m_sessions.find(connection);
-
-                if (it != m_sessions.end()) {
-                    for (const auto &[id, agent]: it->second->getAgents()) {
-                        m_matrix.removeAgent(*agent);
-                    }
-
-                    m_sessions.erase(it);
+                const auto connectionIt = std::find_if(
+                    m_connections.begin(),
+                    m_connections.end(),
+                    [connection](const auto &value) {
+                        return value.get() == connection;
+                    });
+                if (connectionIt != m_connections.end()) {
+                    disconnected = std::move(*connectionIt);
+                    m_connections.erase(connectionIt);
                 }
             }
 
-            auto it = std::find_if(
-                m_connections.begin(),
-                m_connections.end(),
-                [connection](const auto &value) {
-                    return value.get() == connection;
-                });
-            if (it != m_connections.end()) {
-                m_connections.erase(it);
+            if (disconnected) {
+                m_game.removeClientAgent(disconnected->getClientId());
             }
+
         }
-    }
-
-    std::optional<Server::AgentPlacement> Server::addAgent(
-        ClientSession &session,
-        const core::ANGLE angle
-    ) {
-        core::Position target = m_matrix.angles.at(angle);
-
-        if (m_matrix.caseIsFull(target)) {
-            return std::nullopt;
-        }
-
-        auto agent = std::make_unique<core::Agent>();
-
-        core::Agent &agentRef = *agent;
-
-        session.addAgent(std::move(agent));
-
-        const auto position = m_matrix.addAgent(agentRef, angle);
-        if (!position) {
-            return std::nullopt;
-        }
-
-        return AgentPlacement{agentRef.getId(), *position};
-    }
-
-    ClientSession *Server::getClientSession(
-        Connection &connection
-    ) {
-        const auto it = m_sessions.find(&connection);
-
-        if (it == m_sessions.end()) {
-            return nullptr;
-        }
-        return it->second.get();
     }
 
     void Server::hello(
         Connection &connection,
         const Protocol::Message & /* message */
     ) {
-        std::optional<AgentPlacement> placement;
-
-        {
-            std::lock_guard<std::mutex> lock(m_stateMutex);
-
-            ClientSession *session = getClientSession(connection);
-            if (nullptr != session) {
-                placement = addAgent(
-                    *session,
-                    core::BOTTOM_RIGHT
-                );
-            }
-        }
+        const auto placement = m_game.addAgent(
+            connection.getClientId(), core::BOTTOM_RIGHT
+        );
 
         if (!placement) {
             connection.send(Protocol::encode(
@@ -252,17 +147,12 @@ namespace network {
             const auto direction = static_cast<core::Direction>(
                 data.at("direction").get<std::uint16_t>()
             );
-            std::optional<core::Position> position;
-            {
-                std::lock_guard<std::mutex> lock(m_stateMutex);
-                if (auto *session = getClientSession(connection)) {
-                    if (auto *agent = session->getAgent(agentID)) {
-                        position = m_matrix.moveAgent(*agent, direction);
-                    }
-                }
-            }
 
-            if (!position) {
+            const auto target = m_game.move(
+                connection.getClientId(), agentID, direction
+            );
+
+            if (!target) {
                 connection.send(
                     Protocol::encode(
                         Protocol::ResponseType::KO,
@@ -272,14 +162,7 @@ namespace network {
                 return;
             }
 
-            const nlohmann::json payload = {
-                {
-                    "position", {
-                        {"x", position->x},
-                        {"y", position->y}
-                    }
-                }
-            };
+            const nlohmann::json payload = serializePosition(*target);
 
             connection.send(Protocol::encode(
                 Protocol::ResponseType::OK,
@@ -297,83 +180,233 @@ namespace network {
         Connection &connection,
         const Protocol::Message &message
     ) {
+        try {
+            const auto data = message.getData();
+
+            const auto agentID =
+                    data.at("agentID").get<std::size_t>();
+
+            const auto direction = static_cast<core::Direction>(
+                data.at("direction").get<std::uint16_t>()
+            );
+
+            const auto observation = m_game.look(
+                connection.getClientId(), agentID, direction
+            );
+
+            if (!observation) {
+                connection.send(Protocol::encode(
+                    Protocol::ResponseType::KO,
+                    "Agent or cell not found"
+                ));
+                return;
+            }
+
+            const auto payload = serializeLook(*observation);
+
+            connection.send(Protocol::encode(
+                Protocol::ResponseType::OK,
+                payload.dump()
+            ));
+        } catch (const nlohmann::json::exception &) {
+            connection.send(Protocol::encode(
+                Protocol::ResponseType::KO,
+                "Invalid payload"
+            ));
+        }
+    }
+
+    void Server::take(
+        Connection &connection,
+        const Protocol::Message &message
+    ) {
+        try {
+            const auto data = message.getData();
+
+            const auto agentID =
+                    data.at("agentID").get<std::size_t>();
+
+            const auto type = parseResourceType(
+                data.at("type").get<int>()
+            );
+
+            if (!type) {
+                connection.send(
+                    Protocol::encode(
+                        Protocol::ResponseType::KO,
+                        "Invalid resource type"
+                    )
+                );
+                return;
+            }
+
+            const auto result = m_game.take(
+                connection.getClientId(),
+                agentID,
+                *type
+            );
+
+            if (!result) {
+                connection.send(
+                    Protocol::encode(
+                        Protocol::ResponseType::KO,
+                        "client not found"
+                    )
+                );
+                return;
+            }
+
+            if (!result->taken) {
+                connection.send(
+                    Protocol::encode(
+                        Protocol::ResponseType::KO,
+                        "Unable to take resource (missing resource or ritual in progress)"
+                    )
+                );
+                return;
+            }
+
+            connection.send(
+                Protocol::encode(
+                    Protocol::ResponseType::OK,
+                    serializeInventory(result->inventory).dump()
+                )
+            );
+        } catch (const nlohmann::json::exception &) {
+            connection.send(
+                Protocol::encode(
+                    Protocol::ResponseType::KO,
+                    "Invalid payload"
+                )
+            );
+        }
+    }
+
+    void Server::inventory(
+        Connection &connection,
+        const Protocol::Message &message
+    ) {
+        // @todo deport code into inline function.
         const auto data = message.getData();
 
         const auto agentID =
                 data.at("agentID").get<std::size_t>();
 
-        const auto direction = static_cast<core::Direction>(
-            data.at("direction").get<std::uint16_t>()
+        const auto inventory = m_game.inventory(
+            connection.getClientId(),
+            agentID
         );
 
-        nlohmann::json payload = {
-            {"cells", nlohmann::json::array()}
-        };
-
-        bool found = false;
-
-        {
-            std::lock_guard<std::mutex> lock(m_stateMutex);
-
-            if (auto *session = getClientSession(connection)) {
-                if (auto *agent = session->getAgent(agentID)) {
-                    if (const auto *agentCell = agent->getCell()) {
-                        found = true;
-
-                        const auto positions = m_matrix.getVisiblePositions(
-                            agentCell->getPosition(),
-                            direction,
-                            3
-                        );
-
-                        for (const auto &position: positions) {
-                            const auto *cell = m_matrix.getCell(position);
-                            if (!cell) {
-                                continue;
-                            }
-
-                            nlohmann::json cellJson = {
-                                {"position", {position.x, position.y}},
-                                {"resources", nlohmann::json::array()}
-                            };
-
-                            for (const auto &resource: cell->getResources()) {
-                                cellJson["resources"].push_back({
-                                    {"type", resource->getType()},
-                                    {"rotting", resource->getRotting()}
-                                });
-                            }
-
-                            payload["cells"].push_back(std::move(cellJson));
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!found) {
+        if (!inventory) {
             connection.send(Protocol::encode(
                 Protocol::ResponseType::KO,
-                "Agent or cell not found"
+                "Inventory not found"
             ));
             return;
         }
 
         connection.send(Protocol::encode(
             Protocol::ResponseType::OK,
-            payload.dump()
+            serializeInventory(*inventory).dump()
         ));
+    }
+
+    void Server::attack(
+        Connection &connection,
+        const Protocol::Message &message
+    ) {
+        try {
+            const auto data = message.getData();
+            const auto agentId = data.at("agentID").get<std::size_t>();
+            const auto targetId = data.at("targetId").get<std::size_t>();
+
+            const auto result = m_game.attack(
+                connection.getClientId(),
+                agentId,
+                targetId
+            );
+            const auto error = [&](std::string_view reason) {
+                connection.send(Protocol::encode(
+                        Protocol::ResponseType::KO,
+                        nlohmann::json({
+                            { "reason", reason}
+                        })
+                    ));
+            };
+
+            using Result = core::Game::AttackResult;
+            switch (*result) {
+                case Result::KILLED:
+                    connection.send(Protocol::encode(
+                        Protocol::ResponseType::OK, nlohmann::json({
+                            {"targetId", targetId},
+                            {"killed", 1}
+                        })
+                    ));
+                    return;
+                case Result::RITUAL_IN_PROGRESS:
+                    error("Ritual in progress");
+                    return;
+                case Result::SAME_OWNER:
+                    error("You cant attack yourself");
+                    return;
+                case Result::TARGET_NOT_FOUND:
+                    error("Target not found");
+                    return;
+                case Result::TOO_FAR:
+                    error("Target is too far from you");
+                    return;
+                case Result::TARGET_TOO_STRONG:
+                    error("Target is too strong for you");
+            }
+        } catch (const nlohmann::json::exception &) {
+            connection.send(Protocol::encode(
+                Protocol::ResponseType::KO, "Invalid payload"
+            ));
+        }
+    }
+
+    void Server::ritual(
+        Connection &connection,
+        const Protocol::Message &message
+    ) {
+        try {
+            const auto data = message.getData();
+            const auto agentId = data.at("agentID").get<std::size_t>();
+            const auto result = m_game.ritual(connection.getClientId(), agentId);
+            if (!result) {
+                connection.send(Protocol::encode(
+                    Protocol::ResponseType::KO, "Agent not found or not owned by client"
+                ));
+                return;
+            }
+
+            using Result = core::Game::RitualStartResult;
+            switch (*result) {
+                case Result::STARTED:
+                    return;
+                case Result::ALREADY_IN_PROGRESS:
+                    connection.send(Protocol::encode(
+                        Protocol::ResponseType::KO, "Ritual already in progress"
+                    ));
+                    return;
+                case Result::NOT_ENOUGH_RESOURCES:
+                    connection.send(Protocol::encode(
+                        Protocol::ResponseType::KO, "Not enough resources for ritual"
+                    ));
+            }
+        } catch (const nlohmann::json::exception &) {
+            connection.send(Protocol::encode(
+                Protocol::ResponseType::KO, "Invalid payload"
+            ));
+        }
     }
 
     void Server::getMatrix(
         Connection &connection,
         const Protocol::Message &
     ) {
-        nlohmann::json payload;
-        {
-            std::lock_guard<std::mutex> lock(m_stateMutex);
-            payload = serializeMatrix(m_matrix);
-        }
+        const auto payload = serializeMatrix(m_game.getMatrix());
         connection.send(
             Protocol::encode(
                 Protocol::ResponseType::OK,
@@ -447,12 +480,13 @@ namespace network {
                 std::cout << "Client disconnected pulled into cleaning queue\n";
             };
 
-            auto connection = std::make_unique<Connection>(
+            auto connection = std::make_shared<Connection>(
                 clientSocket,
                 ip,
                 port,
                 lambda,
-                onDisconnect
+                onDisconnect,
+                m_nextClientId++
             );
 
             std::cout
@@ -463,25 +497,46 @@ namespace network {
                     << '\n';
 
             Connection *connectionPtr = connection.get();
-            auto session = std::make_unique<ClientSession>(*connectionPtr);
-
-            m_connections.push_back(std::move(connection));
 
             {
                 std::lock_guard<std::mutex> lock(m_stateMutex);
-                m_sessions.emplace(
-                    connectionPtr,
-                    std::move(session)
-                );
+                if (!m_running) {
+                    break;
+                }
+                m_connections.push_back(connection);
+                connectionPtr->start();
             }
-
-            connectionPtr->start();
         }
     }
 
     void Server::tick() {
-        std::lock_guard<std::mutex> lock(m_stateMutex);
-        m_matrix.updateResources();
+        const auto completed = m_game.tick();
+        for (const auto &ritual: completed) {
+            std::shared_ptr<Connection> connection;
+            {
+                std::lock_guard<std::mutex> lock(m_stateMutex);
+                const auto it = std::find_if(
+                    m_connections.begin(),
+                    m_connections.end(),
+                    [&ritual](const auto &candidate) {
+                        return candidate->getClientId() == ritual.clientId;
+                    }
+                );
+                if (it != m_connections.end()) {
+                    connection = *it;
+                }
+            }
+
+            if (connection) {
+                const nlohmann::json payload = {
+                    {"agentID", ritual.agentId},
+                    {"level", ritual.level}
+                };
+                connection->send(Protocol::encode(
+                    Protocol::ResponseType::OK, payload.dump()
+                ));
+            }
+        }
     }
 
     void Server::handleFrame(
@@ -511,6 +566,10 @@ namespace network {
             {Type::GET_MATRIX, &Server::getMatrix},
             {Type::DISCONNECT, &Server::disconnect},
             {Type::LOOK, &Server::lookingAt},
+            {Type::TAKE, &Server::take},
+            {Type::INVENTORY, &Server::inventory},
+            {Type::RITUAL, &Server::ritual},
+            {Type::ATTACK, &Server::attack},
         };
 
         const auto it = handlers.find(message.header.type);
@@ -544,11 +603,17 @@ namespace network {
             m_socket = INVALID_SOCKET;
         }
 
-        for (const auto &connection: m_connections) {
+        std::vector<std::shared_ptr<Connection>> connections;
+        {
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+            connections = m_connections;
+        }
+
+        for (const auto &connection: connections) {
             connection->requestStop();
         }
 
-        for (const auto &connection: m_connections) {
+        for (const auto &connection: connections) {
             connection->join();
         }
     }

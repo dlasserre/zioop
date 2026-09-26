@@ -3,6 +3,7 @@ set(ZIOOP_CORE_SOURCES
         Matrix.cpp
         Agent.cpp
         Resource.cpp
+        Game.cpp
 )
 
 file(GLOB_RECURSE ZIOOP_CORE_HEADERS CONFIGURE_DEPENDS

@@ -24,6 +24,10 @@ namespace gui {
             std::size_t x{};
             std::size_t y{};
             Vector3 position{};
+            std::string action{};
+            std::size_t actionCount{};
+            std::size_t level{};
+            bool ritual{false};
         };
 
         struct ResourceView {

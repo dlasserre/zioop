@@ -2,10 +2,10 @@
 
 #include "zioop/core/Cell.hpp"
 #include "zioop/core/Agent.hpp"
+#include "zioop/core/Types.hpp"
 
 #include <array>
 #include <optional>
-#include <unordered_map>
 #include <vector>
 
 namespace core {
@@ -14,13 +14,6 @@ namespace core {
         TOP_RIGHT,
         BOTTOM_LEFT,
         BOTTOM_RIGHT
-    };
-
-    enum class Direction : std::uint16_t {
-        NORTH = 0,
-        SOUTH = 90,
-        EAST = 180,
-        WEST = 270,
     };
 
     struct Offset {
@@ -61,7 +54,7 @@ namespace core {
         ) const;
 
         [[nodiscard]]
-        const Cell *getCell(const Position &position) const;
+        const Cell* getCell(const Position &position) const;
 
         std::optional<Position> moveAgent(Agent &agent, Direction direction);
 
@@ -69,18 +62,8 @@ namespace core {
         bool caseIsFull(const Position &position) const;
 
         [[nodiscard]]
-        const std::vector<std::vector<Cell> > &getMatrix() const {
+        const std::vector<std::vector<std::unique_ptr<Cell>>> &getMatrix() const {
             return m_cells;
-        }
-
-        [[nodiscard]]
-        std::size_t getTotalAgents() const {
-            return m_agents.size();
-        }
-
-        [[nodiscard]]
-        std::unordered_map<std::size_t, Agent *> getAgents() const {
-            return m_agents;
         }
 
         [[nodiscard]]
@@ -93,6 +76,12 @@ namespace core {
             return m_sizeY;
         }
 
+        [[nodiscard]]
+        std::optional<Position> offsetMatrix(
+            Position origin,
+            Offset offset
+        ) const;
+
     private:
         std::size_t m_sizeX;
         std::size_t m_sizeY;
@@ -101,8 +90,6 @@ namespace core {
         const std::array<Position, 4> angles;
 
     private:
-        std::vector<std::vector<Cell> > m_cells;
-
-        std::unordered_map<std::size_t, Agent *> m_agents;
+        std::vector<std::vector<std::unique_ptr<Cell>>> m_cells;
     };
 }

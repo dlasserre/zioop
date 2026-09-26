@@ -7,6 +7,7 @@
 #include "MatrixConnection.hpp"
 
 #include <future>
+#include <vector>
 
 namespace zioop {
     inline constexpr float CELL_SIZE = 1.0f;
@@ -38,16 +39,42 @@ namespace gui {
             int                 animationCount{};
             float               scale{0.1f};
             float               baseY{0.0f};
-            int                 currentAnimation{0};
             bool                modelReady{false};
+            int                 walkAnimation{-1};
+            int                 idleAnimation{-1};
+            int                 attackAnimation{-1};
+            int                 takeAnimation{-1};
+            int                 ritualAnimation{-1};
+            int                 levelUpAnimation{-1};
+            int                 deathAnimation{-1};
         };
 
         struct AgentMotion {
             Vector3 from{};
             Vector3 current{};
             Vector3 target{};
+
             float elapsed{0.0f};
-            float rotation = 0.0f;
+            float rotation{0.0f};
+
+            int animation{-1};
+            int frame{0};
+            float animationTimer{0.0f};
+
+            // Action jouée une seule fois, après le déplacement éventuel.
+            std::size_t actionCount{0};
+            int actionAnimation{-1};
+
+            std::size_t level{0};
+            bool ritual{false};
+        };
+
+        // Agent tué : il joue Death une fois, puis reste au sol.
+        struct Corpse {
+            Vector3 position{};
+            float rotation{0.0f};
+            int frame{0};
+            float animationTimer{0.0f};
         };
 
         Renderer(
@@ -87,8 +114,6 @@ namespace gui {
             .projection = CAMERA_PERSPECTIVE
         };
 
-        Information m_information{};
-
         MatrixConnection m_connection{};
 
         MatrixConnection::MatrixSnapshot m_matrix;
@@ -100,12 +125,14 @@ namespace gui {
 
         PanelInformation m_panelInformation{};
 
-        void updateAgentMotions(float deltaTime);
+        void updateAgentMotions(ModelRender& model, float deltaTime);
 
         ::Model m_groundModel{};
 
         Texture2D m_groundTexture{};
 
         std::unordered_map<std::size_t, AgentMotion> m_agentMotions;
+
+        std::vector<Corpse> m_corpses;
     };
 }

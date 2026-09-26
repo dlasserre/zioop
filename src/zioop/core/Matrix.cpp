@@ -14,53 +14,58 @@ namespace core {
     };
 
     Matrix::Matrix(
-        const std::size_t sizeX,
-        const std::size_t sizeY
-    )
-        : m_sizeX(sizeX),
-          m_sizeY(sizeY),
-          angles{
-              {
-                  {0, 0},
-                  {sizeX - 1, 0},
-                  {0, sizeY - 1},
-                  {sizeX - 1, sizeY - 1}
-              }
-          } {
+    const std::size_t sizeX,
+    const std::size_t sizeY
+)
+    : m_sizeX(sizeX),
+      m_sizeY(sizeY),
+      angles{
+        {
+            {0, 0},
+            {sizeX - 1, 0},
+            {0, sizeY - 1},
+            {sizeX - 1, sizeY - 1}
+        }
+      } {
         if (sizeX == 0 || sizeY == 0) {
             throw std::invalid_argument(
                 "Matrix dimensions must be greater than 0"
             );
         }
 
-        m_cells.resize(m_sizeX);
-
         std::uniform_int_distribution<int> quantity(0, 3);
-        std::uniform_int_distribution<std::size_t> chooseType(
-            0, types.size() - 1
-        );
+        std::uniform_int_distribution<std::size_t> chooseType(0, types.size() - 1);
+
+        m_cells.reserve(m_sizeX);
 
         for (std::size_t x = 0; x < m_sizeX; ++x) {
-            m_cells[x].resize(m_sizeY);
+            std::vector<std::unique_ptr<Cell>> row;
+            row.reserve(m_sizeY);
 
             for (std::size_t y = 0; y < m_sizeY; ++y) {
-                Cell &cell = m_cells[x][y];
-                cell.setPosition({
+                auto cell = std::make_unique<Cell>();
+
+                cell->setPosition({
                     .x = x,
                     .y = y
                 });
+
                 const int count = quantity(generator);
                 for (int i = 0; i < count; ++i) {
-                    cell.addResource(types[chooseType(generator)]);
+                    cell->addResource(types[chooseType(generator)]);
                 }
+
+                row.push_back(std::move(cell));
             }
+
+            m_cells.push_back(std::move(row));
         }
     }
 
     void Matrix::updateResources() const {
         for (auto &column: m_cells) {
             for (auto &cell: column) {
-                cell.updateResources();
+                cell->updateResources();
             }
         }
     }
@@ -78,16 +83,37 @@ namespace core {
             );
         }
 
-        return !m_cells[position.x][position.y].empty();
+        return !m_cells[position.x][position.y]->empty();
     }
 
-    const Cell *Matrix::getCell(const Position &position) const {
+    const Cell* Matrix::getCell(const Position &position) const {
         if (position.x >= m_sizeX || position.y >= m_sizeY) {
             return nullptr;
         }
 
-        return &m_cells[position.x][position.y];
+        return m_cells[position.x][position.y].get();
     }
+
+    std::optional<Position> Matrix::offsetMatrix(
+            Position origin,
+            const Offset offset
+        ) const {
+        const auto x = static_cast<std::ptrdiff_t>(origin.x) + offset.x;
+        const auto y = static_cast<std::ptrdiff_t>(origin.y) + offset.y;
+
+        if (
+            x < 0 || x >= static_cast<std::ptrdiff_t>(m_sizeX) ||
+            y < 0 || y >= static_cast<std::ptrdiff_t>(m_sizeY)
+        ) {
+            return std::nullopt;
+        }
+        // cast to signed int64
+        origin.x = static_cast<std::size_t>(x);
+        origin.y = static_cast<std::size_t>(y);
+
+        return origin;
+    }
+
 
     std::optional<Position> Matrix::getNeighborPosition(
         Position target,
@@ -97,25 +123,16 @@ namespace core {
             target.x >= m_sizeX || target.y >= m_sizeY) {
             return std::nullopt;
         }
+        const Offset offset = getOffset(direction);
 
-        switch (direction) {
-            case Direction::NORTH:
-                target.y = target.y == 0 ? m_sizeY - 1 : target.y - 1;
-                break;
-            case Direction::SOUTH:
-                target.y = (target.y + 1) % m_sizeY;
-                break;
-            case Direction::EAST:
-                target.x = (target.x + 1) % m_sizeX;
-                break;
-            case Direction::WEST:
-                target.x = target.x == 0 ? m_sizeX - 1 : target.x - 1;
-                break;
-            default:
-                return std::nullopt;
+        if (offset.x == 0 && offset.y == 0) {
+            return std::nullopt;
         }
 
-        return target;
+        return offsetMatrix(
+            target,
+            offset
+        );
     }
 
     std::vector<Position> Matrix::getVisiblePositions(
@@ -123,24 +140,19 @@ namespace core {
         const Direction direction,
         const int level
     ) const {
-        Direction left;
         Direction right;
 
         switch (direction) {
             case Direction::NORTH:
-                left = Direction::WEST;
                 right = Direction::EAST;
                 break;
             case Direction::SOUTH:
-                left = Direction::EAST;
                 right = Direction::WEST;
                 break;
             case Direction::EAST:
-                left = Direction::NORTH;
                 right = Direction::SOUTH;
                 break;
             case Direction::WEST:
-                left = Direction::SOUTH;
                 right = Direction::NORTH;
                 break;
             default:
@@ -151,28 +163,25 @@ namespace core {
             return {};
         }
 
+        const Offset forward = getOffset(direction);
+        const Offset lateral = getOffset(right);
+
         std::vector<Position> visible;
-        Position center = origin;
 
+        /**
+        * depth 2 :   (3,3) (4,3) (5,3) (6,3) (7,3)      left = -2 … +2
+        * depth 1 :         (4,4) (5,4) (6,4)            left = -1 … +1
+        * depth 0 :               (5,5)                  left = 0   ← l'alien
+        **/
         for (int depth = 0; depth < level; ++depth) {
-            if (depth > 0) {
-                center = getNeighborPosition(center, direction).value();
-            }
-
-            Position current = center;
-
-            for (int i = 0; i < depth; ++i) {
-                current = getNeighborPosition(current, left).value();
-            }
-
-            visible.push_back(current);
-
-            for (int i = 0; i < depth; ++i) {
-                current = getNeighborPosition(current, right).value();
-                visible.push_back(current);
-
-                current = getNeighborPosition(current, right).value();
-                visible.push_back(current);
+            for (int left = -depth; left <= depth; ++left) {
+                const Offset offset{
+                    .x = forward.x * depth + lateral.x * left,
+                    .y = forward.y * depth + lateral.y * left
+                };
+                if (const auto position = offsetMatrix(origin, offset)) {
+                    visible.push_back(*position);
+                }
             }
         }
 
@@ -188,27 +197,14 @@ namespace core {
         if (!cell || !cell->contains(agent)) {
             return std::nullopt;
         }
-        Position cellPosition = cell->getPosition();
-        Position target = cell->getPosition();
+        auto [x, y] = cell->getPosition();
 
-        switch (direction) {
-            case Direction::NORTH:
-                target.y = target.y == 0 ? m_sizeY - 1 : target.y - 1;
-                break;
-            case Direction::SOUTH:
-                target.y = (target.y + 1) % m_sizeY;
-                break;
-            case Direction::EAST:
-                target.x = (target.x + 1) % m_sizeX;
-                break;
-            case Direction::WEST:
-                target.x = target.x == 0 ? m_sizeX - 1 : target.x - 1;
-                break;
-            default:
-                return std::nullopt;
+        const auto target = getNeighborPosition(cell->getPosition(), direction);
+        if (!target) {
+            return std::nullopt;
         }
 
-        Cell &destination = m_cells[target.x][target.y];
+        Cell &destination = *m_cells[target->x][target->y];
 
         // Dans le cadre d'une matrice d'une seule case ???
         if (&destination == cell) {
@@ -219,7 +215,7 @@ namespace core {
             return std::nullopt;
         }
 
-        Cell &source = m_cells[cellPosition.x][cellPosition.y];
+        Cell &source = *m_cells[x][y];
 
         destination.emplace(agent);
         source.remove(agent);
@@ -227,8 +223,8 @@ namespace core {
 
         std::cout
                 << "Agent=" << agent.getId()
-                << " from (" << cellPosition.x << ", " << cellPosition.y << ")"
-                << " to (" << target.x << ", " << target.y << ")"
+                << " from (" << x << ", " << y << ")"
+                << " to (" << target->x << ", " << target->y << ")"
                 << " direction (" << static_cast<std::size_t>(direction) << ")"
                 << std::endl;
 
@@ -238,10 +234,9 @@ namespace core {
     void Matrix::removeAgent(Agent &agent) {
         if (const Cell *cell = agent.getCell()) {
             Position cellPosition = cell->getPosition();
-            Cell &source = m_cells[cellPosition.x][cellPosition.y];
+            Cell &source = *m_cells[cellPosition.x][cellPosition.y];
             source.remove(agent);
         }
-        m_agents.erase(agent.getId());
         agent.setCell(nullptr);
     }
 
@@ -255,10 +250,9 @@ namespace core {
             return std::nullopt;
         }
 
-        m_cells[position.x][position.y].emplace(agent);
+        m_cells[position.x][position.y]->emplace(agent);
 
-        m_agents.emplace(agent.getId(), &agent);
-        agent.setCell(&m_cells[position.x][position.y]);
+        agent.setCell(m_cells[position.x][position.y].get());
 
         return position;
     }

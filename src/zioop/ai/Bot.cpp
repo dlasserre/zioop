@@ -1,33 +1,9 @@
 #include "zioop/ai/Bot.hpp"
 
 #include <iostream>
+#include <random>
 
 namespace ai {
-    void Bot::connect() const {
-        sockaddr_in serverAddress{};
-        serverAddress.sin_family = AF_INET;
-        serverAddress.sin_port = htons(m_port);
-
-        inet_pton(
-            AF_INET,
-            m_ip.c_str(),
-            &serverAddress.sin_addr
-        );
-
-        if (
-            ::connect(
-                m_socket,
-                reinterpret_cast<sockaddr *>(&serverAddress),
-                sizeof(serverAddress)
-            ) == SOCKET_ERROR
-        ) {
-            closesocket(m_socket);
-            WSACleanup();
-            throw std::runtime_error("Unable to connect to server");
-        }
-    }
-
-
 
     Bot::Bot(
         std::string ip,
@@ -49,6 +25,127 @@ namespace ai {
             WSACleanup();
             throw std::runtime_error("Unable to initialize socket");
         }
+    }
+
+    void Bot::inventory() {
+        nlohmann::json payload = {
+            {"agentID", getAgentId()},
+        };
+
+        std::cout << "Asking inventory..." << std::endl;
+
+        sendDecision(
+            network::Protocol::MessageType::INVENTORY,
+            std::move(payload)
+        );
+    }
+
+    void Bot::take(int type) {
+        nlohmann::json takePayload = {
+            {"agentID", getAgentId()},
+            {"type", type}
+        };
+
+        std::cout
+            << "Taking resource: "
+            << type
+            << std::endl;
+
+        sendDecision(
+            network::Protocol::MessageType::TAKE,
+            std::move(takePayload)
+        );
+    }
+
+    void Bot::ritual() {
+        sendDecision(
+            network::Protocol::MessageType::RITUAL,
+            {{"agentID", getAgentId()}}
+        );
+    }
+
+    void Bot::look(core::Direction direction) {
+        nlohmann::json payload = {
+            {"agentID", getAgentId()},
+            {"direction", static_cast<std::uint16_t>(direction)}
+        };
+
+        std::cout << "Looking..." << std::endl;
+
+        sendDecision(
+            network::Protocol::MessageType::LOOK,
+            std::move(payload)
+        );
+    }
+
+    void Bot::move(core::Direction direction) {
+        nlohmann::json payload = {
+            {"agentID", getAgentId()},
+            {"direction", static_cast<std::uint16_t>(direction)}
+        };
+
+        std::cout << "Moving..." << std::endl;
+
+        sendDecision(
+            network::Protocol::MessageType::MOVE,
+            std::move(payload)
+        );
+    }
+
+    void Bot::receiveExactly(
+        char *buffer,
+        const int size)
+    const {
+        int totalReceived = 0;
+
+        while (totalReceived < size) {
+            const int received = recv(
+                m_socket,
+                buffer + totalReceived,
+                size - totalReceived,
+                0
+            );
+
+            if (received == SOCKET_ERROR) {
+                throw std::runtime_error(
+                    "recv() failed: " + std::to_string(WSAGetLastError())
+                );
+            }
+
+            if (received == 0) {
+                throw std::runtime_error(
+                    "Server disconnected before the complete response"
+                );
+            }
+
+            totalReceived += received;
+        }
+    }
+
+    void Bot::sendDecision(
+        const network::Protocol::MessageType command,
+        nlohmann::json payload
+    ) {
+        const auto previously = getPreviously();
+
+        const auto nextId = previously
+                ? previously->id + 1
+                : 1;
+
+        addHistory({
+            .id = nextId,
+            .command = command,
+            .parameters = payload,
+            .response = std::nullopt,
+            .reason = ""
+        });
+
+        sendCommand(
+            command,
+            payload.dump()
+        );
+        // @todo remove later
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
     void Bot::sendCommand(
@@ -83,40 +180,11 @@ namespace ai {
         }
     }
 
-    void Bot::receiveExactly(
-        char *buffer,
-        const int size)
-    const {
-        int totalReceived = 0;
-
-        while (totalReceived < size) {
-            const int received = recv(
-                m_socket,
-                buffer + totalReceived,
-                size - totalReceived,
-                0
-            );
-
-            if (received == SOCKET_ERROR) {
-                throw std::runtime_error(
-                    "recv() failed: " + std::to_string(WSAGetLastError())
-                );
-            }
-
-            if (received == 0) {
-                throw std::runtime_error(
-                    "Server disconnected before the complete response"
-                );
-            }
-
-            totalReceived += received;
-        }
-    }
-
-    std::optional<Bot::Decision> Bot::lastDecision() const {
+    std::optional<Bot::Decision> Bot::getPreviously() {
         if (m_history.empty()) {
             return std::nullopt;
         }
+
         return m_history.back();
     }
 
@@ -164,9 +232,7 @@ namespace ai {
         m_responseAvailable.notify_one();
     }
 
-    void Bot::run(
-        const std::atomic_bool &stopRequested
-    ) {
+    void Bot::run(const std::atomic_bool &stopRequested) {
         std::thread thinkThread([this, &stopRequested] {
             while (true) {
                 network::Protocol::Response response;
@@ -181,7 +247,12 @@ namespace ai {
                     response = std::move(m_queue.front());
                     m_queue.pop();
                 }
-                think(response);
+                try {
+                    std::cout << response.payload.data() << std::endl;
+                    think(response);
+                } catch (const std::exception &e) {
+                    std::cerr << "think() failed: " << e.what() << std::endl;
+                }
             }
         });
 
@@ -218,6 +289,30 @@ namespace ai {
 
         if (thinkThread.joinable()) {
             thinkThread.join();
+        }
+    }
+
+    void Bot::connect() const {
+        sockaddr_in serverAddress{};
+        serverAddress.sin_family = AF_INET;
+        serverAddress.sin_port = htons(m_port);
+
+        inet_pton(
+            AF_INET,
+            m_ip.c_str(),
+            &serverAddress.sin_addr
+        );
+
+        if (
+            ::connect(
+                m_socket,
+                reinterpret_cast<sockaddr *>(&serverAddress),
+                sizeof(serverAddress)
+            ) == SOCKET_ERROR
+        ) {
+            closesocket(m_socket);
+            WSACleanup();
+            throw std::runtime_error("Unable to connect to server");
         }
     }
 

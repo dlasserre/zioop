@@ -29,6 +29,11 @@ if(ZIOOP_BUILD_GUI)
             raylib
             nlohmann_json::nlohmann_json
             PRIVATE
+            zioop_protocol
             zioop_flags
     )
+
+    if(WIN32)
+        target_link_libraries(zioop_gui_lib PRIVATE ws2_32)
+    endif()
 endif()

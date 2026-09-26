@@ -10,8 +10,10 @@ namespace network {
         std::string ip,
         const std::uint16_t port,
         FrameHandler frameHandler,
-        DisconnectHandler disconnectHandler
-    ) : m_socket(socket),
+        DisconnectHandler disconnectHandler,
+        const std::optional<std::size_t> clientId
+    ) : m_clientId(clientId),
+        m_socket(socket),
         m_ip(std::move(ip)),
         m_port(port),
         m_frameHandler(std::move(frameHandler)),
@@ -28,11 +30,20 @@ namespace network {
     void Connection::send(
         const std::vector<std::byte> &data
     ) const {
+        // A tick notification and a command response must never interleave frames.
+        std::lock_guard<std::mutex> lock(m_sendMutex);
+        if (!m_running) {
+            return;
+        }
         std::size_t totalSent = 0;
 
         while (totalSent < data.size()) {
+            const SOCKET socket = m_socket.load();
+            if (socket == INVALID_SOCKET) {
+                break;
+            }
             const int sent = ::send(
-                m_socket,
+                socket,
                 reinterpret_cast<const char *>(data.data() + totalSent),
                 static_cast<int>(data.size() - totalSent),
                 0
@@ -55,12 +66,13 @@ namespace network {
         std::byte buffer[1024];
 
         while (m_running) {
-            if (m_socket == INVALID_SOCKET) {
+            const SOCKET socket = m_socket.load();
+            if (socket == INVALID_SOCKET) {
                 break;
             }
 
             const int received = recv(
-                m_socket,
+                socket,
                 reinterpret_cast<char *>(buffer),
                 sizeof(buffer),
                 0
@@ -73,7 +85,11 @@ namespace network {
                     buffer + received
                 );
 
-                while (const auto frame = Protocol::decode(m_receiveBuffer)) {
+                while (m_running) {
+                    const auto frame = Protocol::decode(m_receiveBuffer);
+                    if (!frame) {
+                        break;
+                    }
                     m_frameHandler(*this, *frame);
 
                     const auto consumed = static_cast<std::ptrdiff_t>(
@@ -109,10 +125,10 @@ namespace network {
     void Connection::requestStop() {
         m_running = false;
 
-        if (m_socket != INVALID_SOCKET) {
-            shutdown(m_socket, SD_BOTH);
-            closesocket(m_socket);
-            m_socket = INVALID_SOCKET;
+        const SOCKET socket = m_socket.exchange(INVALID_SOCKET);
+        if (socket != INVALID_SOCKET) {
+            shutdown(socket, SD_BOTH);
+            closesocket(socket);
         }
     }
 
