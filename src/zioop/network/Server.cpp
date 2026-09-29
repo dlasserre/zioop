@@ -33,8 +33,12 @@ namespace network {
 
         std::optional<core::ResourceType> parseResourceType(const int value) {
             switch (value) {
-                case static_cast<int>(core::ResourceType::FRUIT):
-                    return core::ResourceType::FRUIT;
+                case static_cast<int>(core::ResourceType::APPLE):
+                    return core::ResourceType::APPLE;
+                case static_cast<int>(core::ResourceType::CAKE):
+                    return core::ResourceType::CAKE;
+                case static_cast<int>(core::ResourceType::MEAT):
+                    return core::ResourceType::MEAT;
                 default:
                     return std::nullopt;
             }
@@ -336,6 +340,17 @@ namespace network {
 
             using Result = core::Game::AttackResult;
             switch (*result) {
+                case Result::DAMAGED:
+                    connection.send(
+                        Protocol::encode(
+                            Protocol::ResponseType::OK,
+                            nlohmann::json({
+                                {"targetId", targetId},
+                                {"killed", 0}
+                            })
+                        )
+                    );
+                    return;
                 case Result::KILLED:
                     connection.send(Protocol::encode(
                         Protocol::ResponseType::OK, nlohmann::json({

@@ -9,7 +9,7 @@ namespace {
     using namespace std::chrono_literals;
     using Clock = std::chrono::steady_clock;
     using Result = core::Game::RitualStartResult;
-    constexpr auto Fruit = core::ResourceType::FRUIT;
+    constexpr auto Fruit = core::ResourceType::APPLE;
 
     void check(const bool condition, const std::string_view message) {
         if (!condition) {

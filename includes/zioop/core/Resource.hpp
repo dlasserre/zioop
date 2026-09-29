@@ -5,7 +5,10 @@
 
 namespace core {
     enum class ResourceType {
-        FRUIT
+        APPLE,
+        CAKE,
+        MEAT,
+        MAGIC_WATER
     };
 
     class Resource {
@@ -24,16 +27,20 @@ namespace core {
 
         virtual ~Resource() = default;
 
-    protected:
-        virtual void decaying() = 0;
-
-        [[nodiscard]] virtual std::string_view getName() const {
+        [[nodiscard]]
+        virtual std::string_view getName() const {
             switch (m_type) {
-                case ResourceType::FRUIT: return "Fruit";
+                case ResourceType::APPLE: return "Pomme";
+                case ResourceType::CAKE: return "Gateau";
+                case ResourceType::MEAT: return "Viande";
+                case ResourceType::MAGIC_WATER: return "Eau magique";
             }
 
             return "Inconnue";
         }
+
+    protected:
+        virtual void decaying() = 0;
 
         std::atomic_int m_rotting{0};
 

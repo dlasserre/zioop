@@ -10,7 +10,7 @@ namespace core {
     static std::mt19937 generator(std::random_device{}());
 
     constexpr std::array types{
-        ResourceType::FRUIT
+        ResourceType::APPLE
     };
 
     Matrix::Matrix(

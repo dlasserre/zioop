@@ -81,6 +81,11 @@ namespace core {
         bool hasResources() const;
         void repopLoop();
 
+        struct Item {
+            ResourceType type;
+            double weight;
+        };
+
         std::array<Agent *, MAX_AGENTS_PER_CELL> agents{};
         Position m_pos{};
         std::array<std::vector<std::unique_ptr<Resource>>, MAX_AGENTS_PER_CELL> m_resources{};

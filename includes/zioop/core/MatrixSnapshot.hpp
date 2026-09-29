@@ -14,11 +14,18 @@ namespace core {
         int rotting;
     };
 
+    struct ItemInventory {
+        ResourceType type;
+        std::size_t quantity;
+    };
+
     struct AgentSnapshot {
         std::size_t agentId;
-        bool alive;
+        int health;
+        int level;
         Position position;
         std::size_t subCell;
+        std::vector<ItemInventory> inventory;
     };
 
     struct MatrixSnapshot {

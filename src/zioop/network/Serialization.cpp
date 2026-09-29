@@ -3,6 +3,8 @@
 #include "zioop/network/Serialization.hpp"
 
 namespace network {
+
+
     nlohmann::json serializeResource(const core::ObservedResource &resource) {
         return {
             {"type", static_cast<int>(resource.type)},
@@ -86,8 +88,17 @@ namespace network {
             auto agentJson = serializePosition(agent.position);
 
             agentJson["agentId"] = agent.agentId;
-            agentJson["alive"] = agent.alive;
             agentJson["subCell"] = agent.subCell;
+            agentJson["health"] = agent.health;
+            agentJson["level"] = agent.level;
+
+            auto& inventoryJson = agentJson["inventory"] = nlohmann::json::array();
+            for (const auto &item: agent.inventory) {
+                inventoryJson.push_back({
+                    {"type", item.type},
+                    {"quantity", item.quantity}
+                });
+            }
 
             agents.push_back(std::move(agentJson));
         }

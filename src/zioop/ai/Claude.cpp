@@ -137,6 +137,17 @@ void Claude::think(
         return;
     }
 
+    if (previously->command == MessageType::INVENTORY) {
+        // Le serveur vérifie les coûts du niveau actuel et répond à la fin du rituel.
+        std::cout << "Trying to level up..." << std::endl;
+        ritual();
+        return;
+    }
+
+    if (previously->command == MessageType::RITUAL) {
+        std::cout << "Level up completed: " << response.payload << std::endl;
+    }
+
     move(getRandomDirection());
 }
 

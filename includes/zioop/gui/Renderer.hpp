@@ -39,6 +39,7 @@ namespace gui {
             int                 animationCount{};
             float               scale{0.1f};
             float               baseY{0.0f};
+            float               height{0.4f};
             bool                modelReady{false};
             int                 walkAnimation{-1};
             int                 idleAnimation{-1};
@@ -100,7 +101,9 @@ namespace gui {
 
         void DrawAgents();
 
-        void DrawResources() const;
+        void DrawAgentInformation() const;
+
+        void DrawResources();
 
         void DrawGround();
 
@@ -120,8 +123,15 @@ namespace gui {
 
         std::future<MatrixConnection::MatrixSnapshot> m_matrixRequest;
 
+        struct ResourceModel {
+            ModelRender resource;
+            float scale{0.3f};
+            float zOffset{.095f};
+        };
+
         ModelRender m_agentModel{};
-        ModelRender m_resourceModel{};
+        std::unordered_map<int, ResourceModel> m_resourceModels{};
+        std::unordered_map<int, Texture2D> m_inventoryTextures{};
 
         PanelInformation m_panelInformation{};
 

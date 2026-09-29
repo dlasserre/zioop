@@ -20,6 +20,11 @@ namespace gui {
 
     class MatrixConnection {
     public:
+        struct InventoryItem {
+            int type{};
+            std::size_t quantity{};
+        };
+
         struct AgentView {
             std::size_t x{};
             std::size_t y{};
@@ -27,6 +32,8 @@ namespace gui {
             std::string action{};
             std::size_t actionCount{};
             std::size_t level{};
+            int health{};
+            std::vector<InventoryItem> inventory;
             bool ritual{false};
         };
 

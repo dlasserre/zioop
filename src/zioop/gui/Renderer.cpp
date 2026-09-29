@@ -1,9 +1,13 @@
 #include "zioop/gui/Renderer.hpp"
+#include "zioop/gui/Renderer.hpp"
 
 #include <iostream>
 #include <string>
 #include <algorithm>
 #include <set>
+#include <raymath.h>
+
+#include "zioop/core/Resource.hpp"
 
 namespace gui {
     using Clock = std::chrono::steady_clock;
@@ -38,6 +42,7 @@ namespace gui {
             mesh.scale = 0.45f / size;
         }
         mesh.baseY = -bounds.min.y * mesh.scale;
+        mesh.height = (bounds.max.y - bounds.min.y) * mesh.scale;
         mesh.modelReady = modelReady;
     }
 
@@ -67,7 +72,7 @@ namespace gui {
 
     static void LoadModel(
         Renderer::ModelRender &mesh,
-        const std::string &name
+        const std::string_view &name
     ) {
         const auto asset = (
             std::filesystem::path(GetApplicationDirectory())
@@ -111,6 +116,9 @@ namespace gui {
         if (action == "TAKE") {
             return mesh.takeAnimation;
         }
+        if (action == "RITUAL") {
+            return mesh.ritualAnimation;
+        }
         return -1;
     }
 
@@ -138,7 +146,48 @@ namespace gui {
         SetTargetFPS(60);
 
         ModelRender &agentModelRender = m_agentModel;
-        ModelRender &resourceModelRender = m_resourceModel;
+
+        struct ModelOptions {
+            float scale;
+            float zOffset;
+        };
+
+        struct ModelResource {
+            core::ResourceType type;
+            std::string_view path; // <-- Remplacement de std::string
+            ModelOptions options;
+        };
+
+        // constexpr garantit que le tableau ne coûte rien à l'exécution
+        constexpr std::array<ModelResource, 4> model_resources = {{
+            {
+                .type = core::ResourceType::APPLE,
+                .path = "apple/scene.gltf",
+                .options = {.scale = .003f, .zOffset = .095f}
+            },{
+                .type = core::ResourceType::CAKE,
+                .path = "cake/scene.gltf",
+                .options = {.scale = .010f, .zOffset = .095f}
+            },{
+                .type = core::ResourceType::MEAT,
+                .path = "meat/scene.gltf",
+                .options = {.scale = .010f, .zOffset = .095f}
+            },{
+                .type = core::ResourceType::MAGIC_WATER,
+                .path = "water/scene.gltf",
+                .options = {.scale = .10f, .zOffset = .095f}
+            }
+        }};
+
+        for (const auto& model : model_resources) {
+            ResourceModel newResource{
+                .scale = model.options.scale,
+                .zOffset = model.options.zOffset
+            };
+
+            LoadModel(newResource.resource, model.path);
+            m_resourceModels.emplace(static_cast<int>(model.type), newResource);
+        }
 
         const std::string path =
                 std::string(GetApplicationDirectory()) + "assets/sol.jpg";
@@ -155,7 +204,21 @@ namespace gui {
 
         LoadModel(agentModelRender, "Alien.gltf");
 
-        LoadModel(resourceModelRender, "fruit.gltf");
+        const std::pair<core::ResourceType, const char *> inventoryIcons[] = {
+            {core::ResourceType::MEAT, "meat.png"},
+            {core::ResourceType::CAKE, "cake.png"},
+            {core::ResourceType::APPLE, "fruit.png"}
+        };
+        for (const auto &[type, filename]: inventoryIcons) {
+            const auto iconPath = (
+                std::filesystem::path(GetApplicationDirectory()) / "assets" / "icons" / filename
+            ).string();
+            const auto texture = LoadTexture(iconPath.c_str());
+            if (IsTextureValid(texture)) {
+                SetTextureFilter(texture, TEXTURE_FILTER_BILINEAR);
+                m_inventoryTextures.emplace(static_cast<int>(type), texture);
+            }
+        }
 
         DisableCursor();
     }
@@ -240,18 +303,118 @@ namespace gui {
         }
     }
 
-    void Renderer::DrawResources() const {
+    static std::string InventoryResourceName(const int type) {
+        switch (static_cast<core::ResourceType>(type)) {
+            case core::ResourceType::MEAT: return "MEAT";
+            case core::ResourceType::CAKE: return "CAKE";
+            case core::ResourceType::APPLE: return "APPLE";
+            case core::ResourceType::MAGIC_WATER: return "MAGIC_WATER";
+        }
+        return std::format("Resource {}", type);
+    }
+
+    void Renderer::DrawAgentInformation() const {
+        constexpr int fontSize = 14;
+        constexpr float iconSize = 20.0f;
+        constexpr float padding = 6.0f;
+        constexpr float itemGap = 10.0f;
+        constexpr float panelHeight = fontSize + iconSize + padding * 3.0f;
+        const auto cameraForward = Vector3Normalize(Vector3Subtract(m_camera.target, m_camera.position));
+
+        for (const auto &[id, agent]: m_matrix.agents) {
+            const auto motion = m_agentMotions.find(id);
+            auto anchor = motion != m_agentMotions.end() ? motion->second.current : agent.position;
+            anchor.y += m_agentModel.height + 0.12f;
+            if (Vector3DotProduct(Vector3Subtract(anchor, m_camera.position), cameraForward) <= 0.0f) {
+                continue;
+            }
+
+            const auto screen = GetWorldToScreen(anchor, m_camera);
+            if (!std::isfinite(screen.x) || !std::isfinite(screen.y) ||
+                screen.x < 0 || screen.x > GetScreenWidth() ||
+                screen.y < 0 || screen.y > GetScreenHeight()) {
+                continue;
+            }
+
+            const auto stats = std::format("Niv. {}   Vie: {}", agent.level, agent.health);
+            struct InventoryEntry {
+                Texture2D icon;
+                std::string text;
+                float width;
+            };
+            std::vector<InventoryEntry> entries;
+            float inventoryWidth = 0.0f;
+            for (const auto &item: agent.inventory) {
+                if (item.quantity == 0) {
+                    continue;
+                }
+                const auto texture = m_inventoryTextures.find(item.type);
+                const auto icon = texture != m_inventoryTextures.end() ? texture->second : Texture2D{};
+                const auto text = icon.id != 0
+                                      ? std::format("x{}", item.quantity)
+                                      : std::format("{} x{}", InventoryResourceName(item.type), item.quantity);
+                const float width = static_cast<float>(MeasureText(text.c_str(), fontSize)) +
+                                    (icon.id != 0 ? iconSize + 3.0f : 0.0f);
+                if (!entries.empty()) {
+                    inventoryWidth += itemGap;
+                }
+                inventoryWidth += width;
+                entries.push_back({icon, text, width});
+            }
+            if (entries.empty()) {
+                inventoryWidth = static_cast<float>(MeasureText("Inventaire vide", fontSize));
+            }
+            const float panelWidth = std::max(
+                                         static_cast<float>(MeasureText(stats.c_str(), fontSize)), inventoryWidth
+                                     ) + padding * 2.0f;
+            const Rectangle panel{
+                std::round(screen.x - panelWidth / 2.0f),
+                std::round(screen.y - panelHeight), panelWidth, panelHeight
+            };
+            const auto color = ColorFromHSV(static_cast<float>((id % 12) * 30), 0.7f, 0.8f);
+            DrawRectangleRounded(panel, 0.15f, 4, Color{20, 24, 32, 220});
+            DrawRectangleRoundedLinesEx(panel, 0.15f, 4, 1.0f, color);
+            DrawText(stats.c_str(), static_cast<int>(panel.x + padding),
+                     static_cast<int>(panel.y + padding), fontSize, RAYWHITE);
+
+            float x = panel.x + (panel.width - inventoryWidth) / 2.0f;
+            const float y = panel.y + fontSize + padding * 2.0f;
+            if (entries.empty()) {
+                DrawText("Inventaire vide", static_cast<int>(x), static_cast<int>(y + 3.0f),
+                         fontSize, LIGHTGRAY);
+            }
+            for (const auto &entry: entries) {
+                float textX = x;
+                if (entry.icon.id != 0) {
+                    const float scale = iconSize / static_cast<float>(std::max(entry.icon.width, entry.icon.height));
+                    const float width = static_cast<float>(entry.icon.width) * scale;
+                    const float height = static_cast<float>(entry.icon.height) * scale;
+                    DrawTexturePro(entry.icon,
+                                   {0, 0, static_cast<float>(entry.icon.width), static_cast<float>(entry.icon.height)},
+                                   {x + (iconSize - width) / 2.0f, y + (iconSize - height) / 2.0f, width, height},
+                                   {0, 0}, 0, WHITE);
+                    textX += iconSize + 3.0f;
+                }
+                DrawText(entry.text.c_str(), static_cast<int>(textX), static_cast<int>(y + 3.0f),
+                         fontSize, RAYWHITE);
+                x += entry.width + itemGap;
+            }
+        }
+    }
+
+    void Renderer::DrawResources() {
         auto &matrix = m_matrix;
-        auto &model = m_resourceModel;
 
         for (const auto &resource: matrix.resources) {
-            if (IsModelValid(model.model)) {
+            auto it = m_resourceModels.find(resource.type);
+            if (it != m_resourceModels.end()) {
+                auto &model = it->second;
                 auto position = resource.position;
-                position.y -= .095f;
+                position.y -= model.zOffset;
                 DrawModel(
-                    model.model,
+                    model.resource.model,
                     position,
-                    0.3f, // Échelle à adapter à ton asset.
+                    model.scale,
                     WHITE
                 );
             }
@@ -352,7 +515,7 @@ namespace gui {
                         matrix.height != snapshot.height;
 
                 // Cases où un agent vient d'attaquer : ceux qui y disparaissent sont morts.
-                std::set<std::pair<std::size_t, std::size_t>> attackCells;
+                std::set<std::pair<std::size_t, std::size_t> > attackCells;
 
                 for (const auto &[id, agent]: snapshot.agents) {
                     auto [it, inserted] = m_agentMotions.try_emplace(id);
@@ -494,6 +657,7 @@ namespace gui {
             DrawResources();
 
             EndMode3D();
+            DrawAgentInformation();
             EndDrawing();
         }
     }
@@ -507,9 +671,15 @@ namespace gui {
             UnloadModel(m_agentModel.model);
         }
 
-        UnloadModel(m_resourceModel.model);
+        for (auto &val: m_resourceModels | std::views::values) {
+            UnloadModel(val.resource.model);
+        }
+
         UnloadModel(m_groundModel);
         UnloadTexture(m_groundTexture);
+        for (const auto &texture: m_inventoryTextures | std::views::values) {
+            UnloadTexture(texture);
+        }
 
         CloseWindow();
     }

@@ -16,7 +16,6 @@
 namespace core {
     class Game {
     public:
-        static constexpr std::size_t RitualFruitCost = 10;
         static constexpr std::chrono::seconds RitualTimePerLevel{30};
 
         struct AgentPlacement {
@@ -30,7 +29,8 @@ namespace core {
             TARGET_NOT_FOUND,
             SAME_OWNER,
             TOO_FAR,
-            TARGET_TOO_STRONG
+            TARGET_TOO_STRONG,
+            DAMAGED
         };
 
         struct TakeResult {

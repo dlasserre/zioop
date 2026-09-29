@@ -4,6 +4,8 @@
 #include "zioop/core/Matrix.hpp"
 
 namespace core {
+    constexpr int DAMAGE = 2;
+
     Game::Game(Matrix matrix)
         : m_matrix(std::move(matrix)) {
     }
@@ -70,6 +72,7 @@ namespace core {
         if (targetIt->second.clientId == clientId) {
             return AttackResult::SAME_OWNER;
         }
+
         Agent &target = *targetIt->second.agent;
         if (!agent.getCell() ||agent.getCell() != target.getCell()) {
             return AttackResult::TOO_FAR;
@@ -79,10 +82,14 @@ namespace core {
             return AttackResult::TARGET_TOO_STRONG;
         }
 
-        m_matrix.removeAgent(target);
-        m_agents.erase(targetId);
+        target.damage(agent.getLevel() * DAMAGE);
+        if (target.getHealth() == 0) {
+            m_matrix.removeAgent(target);
+            m_agents.erase(targetId);
+            return AttackResult::KILLED;
+        }
 
-        return AttackResult::KILLED;
+        return AttackResult::DAMAGED;
     }
 
     std::optional<Game::AgentPlacement> Game::addAgent(
@@ -167,7 +174,7 @@ namespace core {
         }
 
         const auto duration = RitualTimePerLevel * (agent.getLevel() + 1);
-        if (!agent.startRitual(RitualFruitCost, duration, std::chrono::steady_clock::now())) {
+        if (!agent.startRitual(duration, std::chrono::steady_clock::now())) {
             return RitualStartResult::NOT_ENOUGH_RESOURCES;
         }
         return RitualStartResult::STARTED;
@@ -215,11 +222,20 @@ namespace core {
             if (!cell) {
                 continue;
             }
-            result.agents.push_back({
+
+            AgentSnapshot snapshot{
                 .agentId = agentId,
+                .health = entry.agent->getHealth(),
+                .level = entry.agent->getLevel(),
                 .position = cell->getPosition(),
-                .subCell = cell->getSubCell(*entry.agent).value_or(0)
-            });
+                .subCell = cell->getSubCell(*entry.agent).value_or(0),
+            };
+
+            for (const auto &[type, quantity]: entry.agent->getInventory()) {
+                snapshot.inventory.push_back({.type = type, .quantity = quantity});
+            }
+
+            result.agents.push_back(snapshot);
         }
 
         return result;

@@ -1,0 +1,11 @@
+Model Information:
+* title:	Meat
+* source:	https://sketchfab.com/3d-models/meat-fdcbd368e9454f559364a4ee794453a9
+* author:	Coffeek (https://sketchfab.com/coffe0wolf)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Meat" (https://sketchfab.com/3d-models/meat-fdcbd368e9454f559364a4ee794453a9) by Coffeek (https://sketchfab.com/coffe0wolf) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

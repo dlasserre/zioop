@@ -1,0 +1,11 @@
+Model Information:
+* title:	Apple
+* source:	https://sketchfab.com/3d-models/apple-790093f476a04e49a6873e820bca04c5
+* author:	Eydeet (https://sketchfab.com/eydeet)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Apple" (https://sketchfab.com/3d-models/apple-790093f476a04e49a6873e820bca04c5) by Eydeet (https://sketchfab.com/eydeet) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

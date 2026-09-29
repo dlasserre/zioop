@@ -1,6 +1,7 @@
 #include "zioop/gui/MatrixConnection.hpp"
 
 #include <iostream>
+#include <algorithm>
 
 #include "zioop/network/Protocol.hpp"
 
@@ -53,10 +54,27 @@ namespace gui {
                 agent.action = entry.at("action").get<std::string>();
                 agent.actionCount = readUnsigned(entry.at("actionCount"));
             }
-            // Absents tant que le serveur ne les envoie pas : pas d'animation de rituel.
+            agent.health = entry.at("health").get<int>();
             if (entry.contains("level")) {
                 agent.level = readUnsigned(entry.at("level"));
+            }
+            // Le niveau peut être fourni sans état de rituel.
+            if (entry.contains("ritual")) {
                 agent.ritual = entry.at("ritual").get<bool>();
+            }
+            // Les anciens snapshots représentent un inventaire vide par null.
+            if (const auto inventory = entry.find("inventory");
+                inventory != entry.end() && !inventory->is_null()) {
+                if (!inventory->is_array()) {
+                    throw std::runtime_error("Agent inventory must be an array");
+                }
+                for (const auto &item: *inventory) {
+                    agent.inventory.push_back({
+                        .type = item.at("type").get<int>(),
+                        .quantity = readUnsigned(item.at("quantity"))
+                    });
+                }
+                std::ranges::sort(agent.inventory, {}, &MatrixConnection::InventoryItem::type);
             }
             if (!snapshot.agents.emplace(id, agent).second) {
                 throw std::runtime_error("Duplicate agent ID in GET_MATRIX");

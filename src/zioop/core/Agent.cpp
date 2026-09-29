@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <unordered_map>
 
+
 #include "zioop/core/Inventory.hpp"
 #include "zioop/core/Matrix.hpp"
 
@@ -17,8 +18,51 @@ namespace core {
         : m_id(nextAgentId++) {
     }
 
+    bool Agent::consumeRequiredResourcesForLevel() {
+        const auto it = std::find_if(
+            m_requiredResources.begin(),
+            m_requiredResources.end(),
+            [&](const LevelResources &entry) {
+                return entry.level == m_level;
+            }
+        );
+
+        if (it == m_requiredResources.end()) {
+            return false;
+        }
+
+        for (const auto &[type, requiredCount]: it->resources) {
+            const auto available = std::count_if(
+                m_inventory.begin(),
+                m_inventory.end(),
+                [type](const auto &item) {
+                    return item->getType() == type;
+                }
+            );
+
+            if (static_cast<std::size_t>(available) < requiredCount) {
+                return false;
+            }
+        }
+
+        for (const auto &[type, requiredCount]: it->resources) {
+            std::size_t remaining = requiredCount;
+
+            for (auto item = m_inventory.begin();
+                 item != m_inventory.end() && remaining > 0;) {
+                if ((*item)->getType() == type) {
+                    item = m_inventory.erase(item);
+                    --remaining;
+                } else {
+                    ++item;
+                }
+            }
+        }
+
+        return true;
+    }
+
     bool Agent::startRitual(
-        const std::size_t fruitCost,
         const std::chrono::seconds duration,
         const std::chrono::steady_clock::time_point now
     ) {
@@ -26,26 +70,15 @@ namespace core {
             return false;
         }
 
-        const auto fruits = std::ranges::count_if(m_inventory, [](const auto &resource) {
-            return resource->getType() == ResourceType::FRUIT;
-        });
-        if (static_cast<std::size_t>(fruits) < fruitCost) {
+        if (!consumeRequiredResourcesForLevel()) {
             return false;
         }
-
-        auto remaining = fruitCost;
-        std::erase_if(m_inventory, [&remaining](const auto &resource) {
-            if (remaining == 0 || resource->getType() != ResourceType::FRUIT) {
-                return false;
-            }
-            --remaining;
-            return true;
-        });
 
         m_ritual = Ritual{
             .targetLevel = m_level + 1,
             .finishesAt = now + duration
         };
+
         return true;
     }
 
@@ -59,9 +92,12 @@ namespace core {
         return true;
     }
 
-    void Agent::kill() {
-        if (!m_alive) return;
-        m_alive = false;
+    bool Agent::damage(const int damage) {
+        if (!m_alive) {
+            return false;
+        }
+        m_health -= (m_health - damage < 0) ? damage : 0;
+        return true;
     }
 
     void Agent::setCell(Cell *cell) {
@@ -86,17 +122,16 @@ namespace core {
     }
 
     std::vector<InventoryResource> Agent::getInventory() const {
-
         std::unordered_map<ResourceType, std::size_t> count;
-        for (const auto& resource: m_inventory) {
+        for (const auto &resource: m_inventory) {
             ++count[resource->getType()];
         }
 
         std::vector<InventoryResource> inventory;
-        for (const auto& [type, quantity]: count) {
+        for (const auto &[type, quantity]: count) {
             inventory.push_back({
                 .type = type,
-                .quantity =  quantity
+                .quantity = quantity
             });
         }
 
@@ -104,7 +139,7 @@ namespace core {
     }
 
     void Agent::updateInventory() const {
-        for (const auto& resource: m_inventory) {
+        for (const auto &resource: m_inventory) {
             resource->startRotting();
         }
     }
@@ -120,10 +155,9 @@ namespace core {
     }
 
     std::optional<LookResult> Agent::look(
-            const Matrix& matrix,
-            const Direction direction
-        ) const {
-
+        const Matrix &matrix,
+        const Direction direction
+    ) const {
         if (!m_cell) {
             return std::nullopt;
         }
@@ -136,9 +170,8 @@ namespace core {
 
         LookResult result;
 
-        for (const auto& position: positions) {
-
-            const auto* cell = matrix.getCell(position);
+        for (const auto &position: positions) {
+            const auto *cell = matrix.getCell(position);
 
             if (!cell) {
                 continue;
@@ -150,14 +183,14 @@ namespace core {
                 .agents = {}
             };
 
-            for (const auto& resource: cell->getResources()) {
+            for (const auto &resource: cell->getResources()) {
                 observed.resources.push_back({
                     .type = resource.type,
                     .rotting = resource.rotting
                 });
             }
 
-            for (const auto& agent: cell->getAgents()) {
+            for (const auto &agent: cell->getAgents()) {
                 if (!agent || agent == this) {
                     continue;
                 }
@@ -172,5 +205,4 @@ namespace core {
 
         return result;
     }
-
 }

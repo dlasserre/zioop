@@ -2,8 +2,39 @@
 #include "zioop/core/Fruit.hpp"
 
 #include <algorithm>
+#include <random>
 
 namespace core {
+    namespace {
+
+        ResourceType getRandomResource() {
+            struct Item {
+                ResourceType type;
+                double weight;
+            };
+
+            static const std::vector<Item> resources = {
+                {ResourceType::APPLE, 50.0f},
+                {ResourceType::MAGIC_WATER, 20.0f},
+                {ResourceType::CAKE, 20.0f},
+                {ResourceType::MEAT, 10.0f},
+            };
+
+            static std::discrete_distribution<size_t> dist = []() {
+                std::vector<double> weights;
+                weights.reserve(resources.size());
+                for (const auto&[_, weight] : resources) {
+                    weights.push_back(weight);
+                }
+                return std::discrete_distribution<size_t>(weights.begin(), weights.end());
+            }();
+
+            static std::random_device rd;
+            static std::mt19937 gen(rd());
+
+            return resources[dist(gen)].type;
+        }
+    }
 
     Cell::Cell() {
         m_repopThread = std::thread(&Cell::repopLoop, this);
@@ -94,7 +125,7 @@ namespace core {
             }
 
             for (size_t i = 0; i < m_maxResources; ++i) {
-                pushResource(ResourceType::FRUIT);
+                pushResource(getRandomResource());
             }
         }
     }

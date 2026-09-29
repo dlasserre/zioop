@@ -1,0 +1,11 @@
+Model Information:
+* title:	Bottle
+* source:	https://sketchfab.com/3d-models/bottle-0a679ef337a04dee98ec55a49bb9d1c7
+* author:	Julian Toquica (https://sketchfab.com/juliantoquicagonzalez)
+
+Model License:
+* license type:	CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)
+* requirements:	Author must be credited. No commercial use.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Bottle" (https://sketchfab.com/3d-models/bottle-0a679ef337a04dee98ec55a49bb9d1c7) by Julian Toquica (https://sketchfab.com/juliantoquicagonzalez) licensed under CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)
