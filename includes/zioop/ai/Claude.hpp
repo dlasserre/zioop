@@ -16,6 +16,7 @@ namespace ai {
         }
 
         void think(
+            std::size_t agentId,
             const network::Protocol::Response& response
         ) override;
     };

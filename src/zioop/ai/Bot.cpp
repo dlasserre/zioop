@@ -1,5 +1,6 @@
 #include "zioop/ai/Bot.hpp"
 
+#include <algorithm>
 #include <iostream>
 #include <random>
 
@@ -27,66 +28,81 @@ namespace ai {
         }
     }
 
-    void Bot::inventory() {
+    void Bot::inventory(const std::size_t agentId) {
         nlohmann::json payload = {
-            {"agentID", getAgentId()},
+            {"agentID", agentId},
         };
 
-        std::cout << "Asking inventory..." << std::endl;
+        std::cout << "[" << agentId << "] Asking inventory..." << std::endl;
 
         sendDecision(
+            agentId,
             network::Protocol::MessageType::INVENTORY,
             std::move(payload)
         );
     }
 
-    void Bot::take(int type) {
+    void Bot::take(const std::size_t agentId, int type) {
         nlohmann::json takePayload = {
-            {"agentID", getAgentId()},
+            {"agentID", agentId},
             {"type", type}
         };
 
         std::cout
-            << "Taking resource: "
+            << "[" << agentId << "] Taking resource: "
             << type
             << std::endl;
 
         sendDecision(
+            agentId,
             network::Protocol::MessageType::TAKE,
             std::move(takePayload)
         );
     }
 
-    void Bot::ritual() {
+    void Bot::ritual(const std::size_t agentId) {
         sendDecision(
+            agentId,
             network::Protocol::MessageType::RITUAL,
-            {{"agentID", getAgentId()}}
+            {{"agentID", agentId}}
         );
     }
 
-    void Bot::look(core::Direction direction) {
+    void Bot::invocation(const std::size_t agentId) {
+        std::cout << "[" << agentId << "] Invoking a new agent..." << std::endl;
+
+        sendDecision(
+            agentId,
+            network::Protocol::MessageType::INVOCATION,
+            {{"agentID", agentId}}
+        );
+    }
+
+    void Bot::look(const std::size_t agentId, core::Direction direction) {
         nlohmann::json payload = {
-            {"agentID", getAgentId()},
+            {"agentID", agentId},
             {"direction", static_cast<std::uint16_t>(direction)}
         };
 
-        std::cout << "Looking..." << std::endl;
+        std::cout << "[" << agentId << "] Looking..." << std::endl;
 
         sendDecision(
+            agentId,
             network::Protocol::MessageType::LOOK,
             std::move(payload)
         );
     }
 
-    void Bot::move(core::Direction direction) {
+    void Bot::move(const std::size_t agentId, core::Direction direction) {
         nlohmann::json payload = {
-            {"agentID", getAgentId()},
+            {"agentID", agentId},
             {"direction", static_cast<std::uint16_t>(direction)}
         };
 
-        std::cout << "Moving..." << std::endl;
+        std::cout << "[" << agentId << "] Moving..." << std::endl;
 
         sendDecision(
+            agentId,
             network::Protocol::MessageType::MOVE,
             std::move(payload)
         );
@@ -123,22 +139,23 @@ namespace ai {
     }
 
     void Bot::sendDecision(
+        const std::size_t agentId,
         const network::Protocol::MessageType command,
         nlohmann::json payload
     ) {
-        const auto previously = getPreviously();
+        {
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+            auto &history = m_history[agentId];
 
-        const auto nextId = previously
-                ? previously->id + 1
-                : 1;
-
-        addHistory({
-            .id = nextId,
-            .command = command,
-            .parameters = payload,
-            .response = std::nullopt,
-            .reason = ""
-        });
+            history.push_back({
+                .id = history.empty() ? 1 : history.back().id + 1,
+                .command = command,
+                .parameters = payload,
+                .response = std::nullopt,
+                .reason = ""
+            });
+            m_pending.push_back(agentId);
+        }
 
         sendCommand(
             command,
@@ -180,16 +197,87 @@ namespace ai {
         }
     }
 
-    std::optional<Bot::Decision> Bot::getPreviously() {
-        if (m_history.empty()) {
+    std::optional<Bot::Decision> Bot::getPreviously(const std::size_t agentId) {
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+
+        const auto it = m_history.find(agentId);
+        if (it == m_history.end() || it->second.empty()) {
             return std::nullopt;
         }
 
-        return m_history.back();
+        return it->second.back();
     }
 
-    void Bot::addHistory(Decision decision) {
-        m_history.push_back(std::move(decision));
+    void Bot::route(network::Protocol::Response response) {
+        using MessageType = network::Protocol::MessageType;
+
+        const auto payload = nlohmann::json::parse(
+            response.payload, nullptr, false
+        );
+
+        std::optional<std::size_t> payloadAgent;
+        if (payload.is_object()) {
+            const auto field = payload.find("agentID");
+            if (field != payload.end() && field->is_number_unsigned()) {
+                payloadAgent = field->get<std::size_t>();
+            }
+        }
+
+        std::size_t agentId = 0;
+        std::optional<std::size_t> spawned;
+
+        {
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+
+            const auto lastCommand = [this](const std::size_t id) {
+                const auto it = m_history.find(id);
+                return it == m_history.end() || it->second.empty()
+                    ? std::optional<MessageType>{}
+                    : std::optional<MessageType>{it->second.back().command};
+            };
+
+            auto pending = m_pending.end();
+            if (payloadAgent) {
+                pending = std::find(
+                    m_pending.begin(), m_pending.end(), *payloadAgent
+                );
+                if (
+                    pending == m_pending.end() &&
+                    !m_pending.empty() &&
+                    lastCommand(m_pending.front()) == MessageType::INVOCATION
+                ) {
+                    pending = m_pending.begin();
+                }
+            } else if (!m_pending.empty()) {
+                pending = m_pending.begin();
+            }
+
+            if (pending != m_pending.end()) {
+                agentId = *pending;
+                m_pending.erase(pending);
+            } else if (payloadAgent) {
+                agentId = *payloadAgent;
+            } else {
+                std::cerr << "Unattributed response dropped" << std::endl;
+                return;
+            }
+
+            if (
+                payloadAgent &&
+                *payloadAgent != agentId &&
+                response.header.type == network::Protocol::ResponseType::OK &&
+                lastCommand(agentId) == MessageType::INVOCATION &&
+                !m_history.contains(*payloadAgent)
+            ) {
+                m_history.try_emplace(*payloadAgent);
+                spawned = payloadAgent;
+            }
+        }
+
+        if (spawned) {
+            enqueue({*spawned, response});
+        }
+        enqueue({agentId, std::move(response)});
     }
 
     network::Protocol::Response Bot::receiveResponse() const {
@@ -226,16 +314,16 @@ namespace ai {
         return {{type, length}, std::move(payload)};
     }
 
-    void Bot::enqueue(network::Protocol::Response response) {
+    void Bot::enqueue(Incoming incoming) {
         std::lock_guard<std::mutex> lock(this->m_mutex);
-        m_queue.push(std::move(response));
+        m_queue.push(std::move(incoming));
         m_responseAvailable.notify_one();
     }
 
     void Bot::run(const std::atomic_bool &stopRequested) {
         std::thread thinkThread([this, &stopRequested] {
             while (true) {
-                network::Protocol::Response response;
+                std::optional<Incoming> incoming;
                 {
                     std::unique_lock<std::mutex> lock(m_mutex);
                     m_responseAvailable.wait(lock, [this, &stopRequested] {
@@ -244,12 +332,15 @@ namespace ai {
                     if (m_thinkStopped || stopRequested) {
                         break;
                     }
-                    response = std::move(m_queue.front());
+                    incoming = std::move(m_queue.front());
                     m_queue.pop();
                 }
                 try {
-                    std::cout << response.payload.data() << std::endl;
-                    think(response);
+                    std::cout
+                        << "[" << incoming->agentId << "] "
+                        << incoming->response.payload
+                        << std::endl;
+                    think(incoming->agentId, incoming->response);
                 } catch (const std::exception &e) {
                     std::cerr << "think() failed: " << e.what() << std::endl;
                 }
@@ -268,11 +359,15 @@ namespace ai {
                 throw std::runtime_error(response.payload);
             }
             const auto data = nlohmann::json::parse(response.payload);
-            m_agentId = data.at("agentID").get<std::size_t>();
-            enqueue(std::move(response));
+            const auto agentId = data.at("agentID").get<std::size_t>();
+            {
+                std::lock_guard<std::mutex> lock(m_stateMutex);
+                m_history.try_emplace(agentId);
+            }
+            enqueue({agentId, std::move(response)});
 
             while (!stopRequested) {
-                enqueue(receiveResponse());
+                route(receiveResponse());
             }
 
             disconnect();

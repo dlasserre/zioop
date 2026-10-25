@@ -7,9 +7,17 @@ namespace ai {
     public:
         using Bot::Bot;
 
-        void run() override;
-
     protected:
-        core::Direction chooseDirection() override;
+        [[nodiscard]] std::string_view getName() const override {
+            return "Test";
+        }
+
+        void think(
+            std::size_t agentId,
+            const network::Protocol::Response &response
+        ) override;
+
+    private:
+        std::atomic_bool m_invoked{false};
     };
 }

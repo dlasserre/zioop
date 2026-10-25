@@ -10,6 +10,7 @@
 namespace ai {
 
 void Claude::think(
+    const std::size_t agentId,
     const network::Protocol::Response& response
 ) {
     using Protocol = network::Protocol;
@@ -20,7 +21,7 @@ void Claude::think(
         std::random_device{}()
     };
 
-    const auto previously = getPreviously();
+    const auto previously = getPreviously(agentId);
 
     const auto getRandomDirection = [&] {
         std::uniform_int_distribution<std::size_t> distribution(
@@ -31,8 +32,8 @@ void Claude::think(
         return directions[distribution(generator)];
     };
 
-    if (!getPreviously()) {
-        move(getRandomDirection());
+    if (!previously) {
+        move(agentId, getRandomDirection());
         return;
     }
 
@@ -45,16 +46,16 @@ void Claude::think(
             << std::endl;
 
         if (previously->command == MessageType::MOVE) {
-            move(getRandomDirection());
+            move(agentId, getRandomDirection());
             return;
         }
 
-        move(getRandomDirection());
+        move(agentId, getRandomDirection());
         return;
     }
 
     if (previously->command == MessageType::MOVE) {
-        look(getRandomDirection());
+        look(agentId, getRandomDirection());
         return;
     }
 
@@ -72,7 +73,7 @@ void Claude::think(
                 << error.what()
                 << std::endl;
 
-            move(getRandomDirection());
+            move(agentId, getRandomDirection());
             return;
         }
 
@@ -84,7 +85,7 @@ void Claude::think(
                 << "LOOK response has no valid cells array"
                 << std::endl;
 
-            move(getRandomDirection());
+            move(agentId, getRandomDirection());
             return;
         }
 
@@ -115,7 +116,7 @@ void Claude::think(
             const auto type =
                 resource["type"].get<int>();
 
-            take(type);
+            take(agentId, type);
 
             return;
         }
@@ -124,7 +125,7 @@ void Claude::think(
             << "No resources found."
             << std::endl;
 
-        move(getRandomDirection());
+        move(agentId, getRandomDirection());
         return;
     }
 
@@ -133,14 +134,13 @@ void Claude::think(
         std::cout
             << "Resource collected."
             << std::endl;
-        inventory();
+        inventory(agentId);
         return;
     }
 
     if (previously->command == MessageType::INVENTORY) {
-        // Le serveur vérifie les coûts du niveau actuel et répond à la fin du rituel.
         std::cout << "Trying to level up..." << std::endl;
-        ritual();
+        ritual(agentId);
         return;
     }
 
@@ -148,7 +148,7 @@ void Claude::think(
         std::cout << "Level up completed: " << response.payload << std::endl;
     }
 
-    move(getRandomDirection());
+    move(agentId, getRandomDirection());
 }
 
 }

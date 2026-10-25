@@ -8,6 +8,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <deque>
+#include <unordered_map>
 #include <optional>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -48,38 +49,39 @@ namespace ai {
             std::string reason;
         };
 
-        std::size_t m_agentId{0};
-
         [[nodiscard]]
         virtual std::string_view getName() const = 0;
 
         virtual void think(
+            std::size_t agentId,
             const network::Protocol::Response& response
         ) = 0;
 
-        [[nodiscard]]
-        std::size_t getAgentId() const {
-            return m_agentId;
-        }
-
-        virtual void move(core::Direction direction) final;
-        virtual void inventory() final;
-        virtual void look(core::Direction direction) final;
-        virtual void take(int type) final;
-        virtual void ritual() final;
+        virtual void move(std::size_t agentId, core::Direction direction) final;
+        virtual void inventory(std::size_t agentId) final;
+        virtual void look(std::size_t agentId, core::Direction direction) final;
+        virtual void take(std::size_t agentId, int type) final;
+        virtual void ritual(std::size_t agentId) final;
+        virtual void invocation(std::size_t agentId) final;
         // virtual void attack(int agentId) final;
 
         [[nodiscard]]
-        virtual std::optional<Decision> getPreviously() final;
+        virtual std::optional<Decision> getPreviously(std::size_t agentId) final;
 
     private:
 
-        void addHistory(Decision decision);
+        struct Incoming {
+            std::size_t agentId;
+            network::Protocol::Response response;
+        };
 
         void sendDecision(
+            std::size_t agentId,
             network::Protocol::MessageType command,
             nlohmann::json payload
         );
+
+        void route(network::Protocol::Response response);
 
         void sendCommand(
             network::Protocol::MessageType messageType,
@@ -88,7 +90,7 @@ namespace ai {
 
         void connect() const;
         void disconnect();
-        void enqueue(network::Protocol::Response response);
+        void enqueue(Incoming incoming);
         void receiveExactly(char *buffer, int size) const;
         [[nodiscard]] network::Protocol::Response receiveResponse() const;
 
@@ -96,10 +98,12 @@ namespace ai {
 
         std::string m_ip;
         std::uint16_t m_port;
-        std::queue<network::Protocol::Response> m_queue;
+        std::queue<Incoming> m_queue;
         std::mutex m_mutex{};
         bool m_thinkStopped{false};
         std::condition_variable m_responseAvailable;
-        std::deque<Decision> m_history{};
+        std::mutex m_stateMutex{};
+        std::unordered_map<std::size_t, std::deque<Decision>> m_history{};
+        std::deque<std::size_t> m_pending{};
     };
 }

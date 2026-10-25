@@ -5,40 +5,32 @@
 
 namespace ai {
 
-    core::Direction Test::chooseDirection() {
+    void Test::think(
+        const std::size_t agentId,
+        const network::Protocol::Response &response
+    ) {
+        using MessageType = network::Protocol::MessageType;
 
-    }
+        static thread_local std::mt19937 generator{std::random_device{}()};
+        std::uniform_int_distribution<std::size_t> distribution(
+            0, directions.size() - 1
+        );
 
-    void Test::run() {
+        const auto previously = getPreviously(agentId);
 
-        std::mt19937 generator(std::random_device{}());
-        std::uniform_int_distribution<std::size_t> chooseDirection(0, directions.size() - 1);
-
-        std::cout << "Random MOVE every 3 seconds. Ctrl+C to stop." << std::endl;
-
-        while (!m_stopRequested) {
-            std::this_thread::sleep_for(std::chrono::seconds(3));
-            if (m_stopRequested) {
-                break;
-            }
-
-            const auto direction = directions[chooseDirection(generator)];
-            const nlohmann::json movePayload = {
-                {"agentID", m_agentId},
-                {"direction", static_cast<std::uint16_t>(direction)}
-            };
-            sendCommand(
-                network::Protocol::MessageType::MOVE,
-                movePayload.dump()
-            );
-
-            const auto moveResponse = receiveResponse();
-            std::cout
-                    << "MOVE agent " << m_agentId
-                    << " direction " << static_cast<std::uint16_t>(direction) << ' '
-                    << (moveResponse.header.type == network::Protocol::ResponseType::OK ? "OK" : "KO")
-                    << ": " << moveResponse.payload << std::endl;
+        if (!previously && !m_invoked.exchange(true)) {
+            invocation(agentId);
+            return;
         }
+
+        if (previously && previously->command == MessageType::INVOCATION) {
+            std::cout
+                    << "INVOCATION "
+                    << (response.header.type == network::Protocol::ResponseType::OK ? "OK" : "KO")
+                    << ": " << response.payload << std::endl;
+        }
+
+        move(agentId, directions[distribution(generator)]);
     }
 
 }
