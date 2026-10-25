@@ -87,7 +87,7 @@ namespace network {
             std::shared_ptr<Connection> disconnected;
             {
                 std::lock_guard<std::mutex> lock(m_stateMutex);
-                const auto connectionIt = std::find_if(
+                const auto connectionIt = std::ranges::find_if(
                     m_connections.begin(),
                     m_connections.end(),
                     [connection](const auto &value) {
@@ -102,7 +102,6 @@ namespace network {
             if (disconnected) {
                 m_game.removeClientAgent(disconnected->getClientId());
             }
-
         }
     }
 
@@ -110,8 +109,8 @@ namespace network {
         Connection &connection,
         const Protocol::Message & /* message */
     ) {
-        const auto placement = m_game.addAgent(
-            connection.getClientId(), core::BOTTOM_RIGHT
+        const auto placement = m_game.initClient(
+            connection.getClientId()
         );
 
         if (!placement) {
@@ -122,19 +121,12 @@ namespace network {
             return;
         }
 
-        const nlohmann::json payload = {
-            {"agentID", placement->agentId},
-            {
-                "position", {
-                    {"x", placement->position.x},
-                    {"y", placement->position.y}
-                }
-            }
-        };
-
         connection.send(Protocol::encode(
             Protocol::ResponseType::OK,
-            payload.dump()
+            serializeHello({
+                .base = {.agentId = placement->agentId},
+                .position = placement->position
+            }).dump()
         ));
     }
 
@@ -166,12 +158,14 @@ namespace network {
                 return;
             }
 
-            const nlohmann::json payload = serializePosition(*target);
-
             connection.send(Protocol::encode(
                 Protocol::ResponseType::OK,
-                payload.dump()
+                serializePosition({
+                    .base = { .agentId = agentID },
+                    .position = *target
+                })
             ));
+
         } catch (const nlohmann::json::exception &) {
             connection.send(Protocol::encode(
                 Protocol::ResponseType::KO,
@@ -194,7 +188,7 @@ namespace network {
                 data.at("direction").get<std::uint16_t>()
             );
 
-            const auto observation = m_game.look(
+            auto observation = m_game.look(
                 connection.getClientId(), agentID, direction
             );
 
@@ -205,7 +199,7 @@ namespace network {
                 ));
                 return;
             }
-
+            observation->agentId = agentID;
             const auto payload = serializeLook(*observation);
 
             connection.send(Protocol::encode(
@@ -315,6 +309,31 @@ namespace network {
         ));
     }
 
+    void Server::invocation(
+        Connection &connection,
+        const Protocol::Message &message
+    ) {
+        try {
+            const auto data = message.getData();
+            const auto placement = m_game.createAgent(connection.getClientId());
+            if (!placement) {
+                connection.send(Protocol::encode(
+                    Protocol::ResponseType::KO,
+                    "Cannot spawn new agent"
+                ));
+                return;
+            }
+            connection.send(Protocol::encode(
+                Protocol::ResponseType::OK,
+                serializePosition(placement->position)
+            ));
+        } catch (const nlohmann::json::exception &) {
+            connection.send(Protocol::encode(
+                Protocol::ResponseType::KO, "Invalid payload"
+            ));
+        }
+    }
+
     void Server::attack(
         Connection &connection,
         const Protocol::Message &message
@@ -331,11 +350,11 @@ namespace network {
             );
             const auto error = [&](std::string_view reason) {
                 connection.send(Protocol::encode(
-                        Protocol::ResponseType::KO,
-                        nlohmann::json({
-                            { "reason", reason}
-                        })
-                    ));
+                    Protocol::ResponseType::KO,
+                    nlohmann::json({
+                        {"reason", reason}
+                    })
+                ));
             };
 
             using Result = core::Game::AttackResult;
@@ -396,7 +415,7 @@ namespace network {
                 return;
             }
 
-            using Result = core::Game::RitualStartResult;
+            using Result = core::RitualStartResult;
             switch (*result) {
                 case Result::STARTED:
                     return;
@@ -420,8 +439,10 @@ namespace network {
     void Server::getMatrix(
         Connection &connection,
         const Protocol::Message &
-    ) {
-        const auto payload = serializeMatrix(m_game.getMatrix());
+    ) const {
+        const auto payload = serializeMatrix({
+            .snapshot = m_game.getMatrix()
+        });
         connection.send(
             Protocol::encode(
                 Protocol::ResponseType::OK,
@@ -569,6 +590,13 @@ namespace network {
         handleMessage(connection, message);
     }
 
+    void Server::broadcast(
+        Connection &,
+        const Protocol::Message &
+    ) {
+        // @todo not yet implemented.
+    }
+
     void Server::handleMessage(
         Connection &connection,
         const Protocol::Message &message
@@ -585,6 +613,8 @@ namespace network {
             {Type::INVENTORY, &Server::inventory},
             {Type::RITUAL, &Server::ritual},
             {Type::ATTACK, &Server::attack},
+            {Type::INVOCATION, &Server::invocation},
+            {Type::BROADCAST, &Server::broadcast} // @todo not yet implemented
         };
 
         const auto it = handlers.find(message.header.type);
@@ -618,7 +648,7 @@ namespace network {
             m_socket = INVALID_SOCKET;
         }
 
-        std::vector<std::shared_ptr<Connection>> connections;
+        std::vector<std::shared_ptr<Connection> > connections;
         {
             std::lock_guard<std::mutex> lock(m_stateMutex);
             connections = m_connections;

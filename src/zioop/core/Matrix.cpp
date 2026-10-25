@@ -231,6 +231,18 @@ namespace core {
         return target;
     }
 
+    Cell *Matrix::getFreeCell() const {
+        for (const auto &x: m_cells) {
+            for (const auto &y: x) {
+                if (!y->isFull()) {
+                    return y.get();
+                }
+            }
+        }
+
+        return nullptr;
+    }
+
     void Matrix::removeAgent(Agent &agent) {
         if (const Cell *cell = agent.getCell()) {
             Position cellPosition = cell->getPosition();
@@ -241,19 +253,14 @@ namespace core {
     }
 
     std::optional<Position> Matrix::addAgent(
-        Agent &agent,
-        const ANGLE angle
-    ) {
-        const Position position = angles.at(angle);
-
-        if (caseIsFull(position)) {
+        Agent &agent
+    ) const {
+        const auto cell = getFreeCell();
+        if (!cell) {
             return std::nullopt;
         }
+        cell->emplace(agent);
 
-        m_cells[position.x][position.y]->emplace(agent);
-
-        agent.setCell(m_cells[position.x][position.y].get());
-
-        return position;
+        return cell->getPosition();
     }
 }

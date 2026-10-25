@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <random>
 
+#include "zioop/core/Agent.hpp"
+
 namespace core {
     namespace {
 
@@ -133,6 +135,7 @@ namespace core {
     bool Cell::emplace(Agent &agent) {
         for (Agent *&_agent: agents) {
             if (_agent == nullptr) {
+                agent.setCell(this);
                 _agent = &agent;
                 return true;
             }

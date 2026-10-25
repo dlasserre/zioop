@@ -4,6 +4,7 @@ if(ZIOOP_BUILD_GUI)
             MatrixConnection.cpp
             Agent.cpp
             Renderer.cpp
+            Terrain.cpp
     )
 
     file(GLOB_RECURSE ZIOOP_GUI_HEADERS CONFIGURE_DEPENDS

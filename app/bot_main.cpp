@@ -1,49 +1,69 @@
-#include <iostream>
-#include <cstddef> // offsetof
-#include <cstdint>
+// #include <chrono>
+// #include <condition_variable>
+// #include <iostream>
+// #include <mutex>
+// #include <thread>
+//
+// std::mutex mutex;
+// std::condition_variable cv;
+// int a = 0;
+//
+// namespace {
+//     // Explication des cv.
+//     class Worker {
+//     public:
+//         explicit Worker(std::mutex &mutex);
+//
+//         void work(int& a, int its_me) {
+//             while (true) {
+//                 std::unique_lock<std::mutex> lock(m_mutex);
+//                 cv.wait(lock, [&]() { return (a % 2) == its_me || a >= 10; });
+//                 if (a >= 10) {
+//                     cv.notify_all();
+//                     break;
+//                 }
+//                 a += 1;
+//                 std::cout << std::format("Worker {} (parity {} ) a = {} ", std::this_thread::get_id(), its_me, a) << std::endl;
+//
+//                 cv.notify_all();
+//             }
+//         }
+//
+//     private:
+//         std::mutex& m_mutex;
+//     };
+// }
+//
+// Worker::Worker(std::mutex &mutex) : m_mutex(mutex) {}
+//
+// int main() {
+//
+//     Worker w1(mutex);
+//
+//     std::thread t1([&] {w1.work(a, 0); });
+//     std::thread t2([&] {w1.work(a, 1); });
+//
+//     t1.join();
+//     t2.join();
+//
+//     std::cout << "Finished!" << std::endl;
+//     return EXIT_SUCCESS;
+// }
 
-struct FileHeader {
-    char magic[4];
-    std::uint16_t version;
-    std::uint16_t flags;
-    std::uint32_t nodeCount;
-    std::uint32_t nodeNameBytes;
-    std::uint32_t recordCount;
-    std::uint32_t speciesNameBytes;
-    std::uint32_t groupCount;
-    std::uint32_t groupNameBytes;
-    std::uint32_t nodesOffset;
-    std::uint32_t nodeNamesOffset;
-    std::uint32_t recordsOffset;
-    std::uint32_t speciesNamesOffset;
-    std::uint32_t groupsOffset;
-    std::uint32_t groupNamesOffset;
-    std::uint32_t reserved[2];
-};
+namespace {
+    
+}
 
 int main() {
-    // 1. Taille théorique des données utiles
-    std::size_t dataSize = sizeof(FileHeader::magic)
-                           + sizeof(FileHeader::version)
-                           + sizeof(FileHeader::flags)
-                           + sizeof(FileHeader::nodeCount)
-                           + sizeof(FileHeader::nodeNameBytes)
-                           + sizeof(FileHeader::recordCount)
-                           + sizeof(FileHeader::speciesNameBytes)
-                           + sizeof(FileHeader::groupCount)
-                           + sizeof(FileHeader::groupNameBytes)
-                           + sizeof(FileHeader::nodesOffset)
-                           + sizeof(FileHeader::nodeNamesOffset)
-                           + sizeof(FileHeader::recordsOffset)
-                           + sizeof(FileHeader::speciesNamesOffset)
-                           + sizeof(FileHeader::groupsOffset)
-                           + sizeof(FileHeader::groupNamesOffset)
-                           + sizeof(FileHeader::reserved);
 
-    // 2. Calcul du padding global inséré par le compilateur
-    std::size_t totalPadding = sizeof(FileHeader) - dataSize;
-
-    std::cout << "Taille totale de la struct : " << sizeof(FileHeader) << " octets\n";
-    std::cout << "Taille des données cumulées : " << dataSize << " octets\n";
-    std::cout << "Padding total ajouté        : " << totalPadding << " octets\n";
 }
+
+
+
+
+
+
+
+
+
+

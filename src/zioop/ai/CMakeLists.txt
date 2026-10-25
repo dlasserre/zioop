@@ -3,6 +3,7 @@ if(ZIOOP_BUILD_AI)
     set(ZIOOP_AI_SOURCES
             Bot.cpp
             Claude.cpp
+            Test.cpp
     )
 
     file(GLOB_RECURSE ZIOOP_AI_HEADERS CONFIGURE_DEPENDS

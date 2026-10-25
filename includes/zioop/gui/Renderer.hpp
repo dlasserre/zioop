@@ -5,6 +5,7 @@
 #define NOMINMAX
 
 #include "MatrixConnection.hpp"
+#include "Terrain.hpp"
 
 #include <future>
 #include <vector>
@@ -137,7 +138,7 @@ namespace gui {
 
         void updateAgentMotions(ModelRender& model, float deltaTime);
 
-        ::Model m_groundModel{};
+        Terrain m_terrain;
 
         Texture2D m_groundTexture{};
 

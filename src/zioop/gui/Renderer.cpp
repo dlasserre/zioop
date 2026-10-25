@@ -194,14 +194,6 @@ namespace gui {
 
         m_groundTexture = LoadTexture(path.c_str());
 
-        m_groundModel = LoadModelFromMesh(
-            GenMeshCube(zioop::CELL_SIZE, 0.05f, zioop::CELL_SIZE)
-        );
-
-        m_groundModel.materials[0]
-                .maps[MATERIAL_MAP_DIFFUSE]
-                .texture = m_groundTexture;
-
         LoadModel(agentModelRender, "Alien.gltf");
 
         const std::pair<core::ResourceType, const char *> inventoryIcons[] = {
@@ -235,8 +227,10 @@ namespace gui {
                         ? &it->second
                         : nullptr;
 
-            const Vector3 visualPosition =
+            Vector3 visualPosition =
                     motion ? motion->current : agent.position;
+            visualPosition.y =
+                    m_terrain.heightAt(visualPosition.x, visualPosition.z) + 0.05f;
 
             const Color color = ColorFromHSV(
                 static_cast<float>((id % 12) * 30),
@@ -289,6 +283,7 @@ namespace gui {
                 );
 
                 auto position = corpse.position;
+                position.y = m_terrain.heightAt(position.x, position.z) + 0.05f;
                 position.y += model.baseY;
 
                 DrawModelEx(
@@ -324,6 +319,7 @@ namespace gui {
         for (const auto &[id, agent]: m_matrix.agents) {
             const auto motion = m_agentMotions.find(id);
             auto anchor = motion != m_agentMotions.end() ? motion->second.current : agent.position;
+            anchor.y = m_terrain.heightAt(anchor.x, anchor.z) + 0.05f;
             anchor.y += m_agentModel.height + 0.12f;
             if (Vector3DotProduct(Vector3Subtract(anchor, m_camera.position), cameraForward) <= 0.0f) {
                 continue;
@@ -410,11 +406,26 @@ namespace gui {
             if (it != m_resourceModels.end()) {
                 auto &model = it->second;
                 auto position = resource.position;
-                position.y -= model.zOffset;
-                DrawModel(
+
+                // Variation stable : dérivée de la sous-case et du type,
+                // donc identique d'une frame à l'autre.
+                const int cellX = static_cast<int>(std::lround(position.x * 4.0f));
+                const int cellZ = static_cast<int>(std::lround(position.z * 4.0f));
+                const auto seed = 100u + static_cast<unsigned>(resource.type);
+
+                position.x += (hash01(cellX, cellZ, seed) - 0.5f) * 0.24f;
+                position.z += (hash01(cellX, cellZ, seed + 1) - 0.5f) * 0.24f;
+                position.y = m_terrain.heightAt(position.x, position.z) + 0.12f - model.zOffset;
+
+                const float angle = hash01(cellX, cellZ, seed + 2) * 360.0f;
+                const float scale = model.scale * (0.85f + 0.3f * hash01(cellX, cellZ, seed + 3));
+
+                DrawModelEx(
                     model.resource.model,
                     position,
-                    model.scale,
+                    Vector3{0.0f, 1.0f, 0.0f},
+                    angle,
+                    Vector3{scale, scale, scale},
                     WHITE
                 );
             }
@@ -610,24 +621,9 @@ namespace gui {
     }
 
     void Renderer::DrawGround() {
-        if (m_matrix.width == 0 || m_matrix.height == 0) {
-            return;
-        }
-
-        const float cellsize = zioop::CELL_SIZE;
-
-        // Un cube texturé par case.
-        for (std::size_t x = 0; x < m_matrix.width; ++x) {
-            for (std::size_t z = 0; z < m_matrix.height; ++z) {
-                const Vector3 position{
-                    static_cast<float>(x) * cellsize,
-                    0.0,
-                    static_cast<float>(z) * cellsize
-                };
-
-                DrawModel(m_groundModel, position, 1.0f, WHITE);
-            }
-        }
+        m_terrain.draw();
+        m_terrain.drawTrees();
+        m_terrain.drawRocks();
     }
 
     void Renderer::drawWorld() {
@@ -639,6 +635,8 @@ namespace gui {
             const auto now = Clock::now();
             auto &matrix = m_matrix;
             updateMatrix(hasSnapshot, nextRequest);
+
+            m_terrain.ensure(m_matrix.width, m_matrix.height, m_groundTexture);
 
             updateAgentMotions(model, GetFrameTime());
 
@@ -675,7 +673,7 @@ namespace gui {
             UnloadModel(val.resource.model);
         }
 
-        UnloadModel(m_groundModel);
+        m_terrain.clear();
         UnloadTexture(m_groundTexture);
         for (const auto &texture: m_inventoryTextures | std::views::values) {
             UnloadTexture(texture);

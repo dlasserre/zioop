@@ -16,6 +16,7 @@
 
 #include "zioop/ai/Bot.hpp"
 #include "zioop/ai/Claude.hpp"
+#include "zioop/ai/Test.hpp"
 #include "zioop/network/Protocol.hpp"
 
 namespace {
@@ -37,7 +38,7 @@ int main() {
     int exitCode = EXIT_FAILURE;
 
     try {
-        ai::Bot* bot = new ai::Claude("127.0.0.1", 9090);
+        ai::Bot* bot = new ai::Test("127.0.0.1", 9090);
         bot->run(stopRequested);
         exitCode = EXIT_SUCCESS;
     } catch (const std::exception &error) {

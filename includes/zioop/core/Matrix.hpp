@@ -35,7 +35,7 @@ namespace core {
     public:
         explicit Matrix(std::size_t sizeX, std::size_t sizeY);
 
-        std::optional<Position> addAgent(Agent &agent, ANGLE angle);
+        std::optional<Position> addAgent(Agent &agent) const;
 
         void removeAgent(Agent &agent);
 
@@ -55,6 +55,9 @@ namespace core {
 
         [[nodiscard]]
         const Cell* getCell(const Position &position) const;
+
+        [[nodiscard]]
+        Cell* getFreeCell() const;
 
         std::optional<Position> moveAgent(Agent &agent, Direction direction);
 

@@ -126,8 +126,8 @@ namespace core {
         for (const auto &resource: m_inventory) {
             ++count[resource->getType()];
         }
-
         std::vector<InventoryResource> inventory;
+        inventory.reserve(count.size());
         for (const auto &[type, quantity]: count) {
             inventory.push_back({
                 .type = type,

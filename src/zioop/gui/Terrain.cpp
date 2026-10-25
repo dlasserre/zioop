@@ -6,19 +6,24 @@
 #include <cmath>
 
 namespace gui {
+    float hash01(const int x, const int z, const unsigned seed) {
+        unsigned h = static_cast<unsigned>(x) * 374761393u
+                     + static_cast<unsigned>(z) * 668265263u
+                     + seed * 2246822519u;
+        h = (h ^ (h >> 13)) * 1274126177u;
+        h ^= h >> 16;
+        return static_cast<float>(h & 0xFFFFFFu) / static_cast<float>(0x1000000u);
+    }
+
     namespace {
         constexpr int MARGIN = 12;
         constexpr int CHUNK_CELLS = 16;
         constexpr int RESOLUTION = 4;
 
-        float hash01(const int x, const int z, const unsigned seed) {
-            unsigned h = static_cast<unsigned>(x) * 374761393u
-                         + static_cast<unsigned>(z) * 668265263u
-                         + seed * 2246822519u;
-            h = (h ^ (h >> 13)) * 1274126177u;
-            h ^= h >> 16;
-            return static_cast<float>(h & 0xFFFFFFu) / static_cast<float>(0x1000000u);
-        }
+        constexpr Vector2 CELL_SPOTS[8] = {
+            {-0.5f, -0.5f}, {0.5f, -0.5f}, {-0.5f, 0.5f}, {0.5f, 0.5f},
+            {0.0f, -0.5f}, {0.0f, 0.5f}, {-0.5f, 0.0f}, {0.5f, 0.0f}
+        };
 
         float smooth(const float t) { return t * t * (3.0f - 2.0f * t); }
 
@@ -166,6 +171,192 @@ namespace gui {
         }
 
         scatterTrees();
+        buildRockMesh();
+        scatterRocks();
+        scatterBushes();
+    }
+
+    void Terrain::scatterBushes() {
+        const int w = static_cast<int>(m_width);
+        const int h = static_cast<int>(m_height);
+
+        for (int z = -MARGIN; z < h + MARGIN; ++z) {
+            for (int x = -MARGIN; x < w + MARGIN; ++x) {
+                const bool inside = x >= 0 && x < w && z >= 0 && z < h;
+                const float roll = hash01(x, z, 101);
+                Vector3 pos{};
+                float size;
+
+                if (inside) {
+                    const float clump = smooth(Clamp(
+                        (fbm(static_cast<float>(x) * 0.3f + 200.0f,
+                             static_cast<float>(z) * 0.3f + 200.0f) - 0.5f) / 0.25f,
+                        0.0f, 1.0f));
+                    if (roll > 0.06f + 0.20f * clump) continue;
+
+                    const Vector2 spot = CELL_SPOTS[static_cast<int>(hash01(x, z, 103) * 8.0f) % 8];
+                    pos.x = static_cast<float>(x) + spot.x + (hash01(x, z, 107) - 0.5f) * 0.12f;
+                    pos.z = static_cast<float>(z) + spot.y + (hash01(x, z, 109) - 0.5f) * 0.12f;
+                    size = 0.06f + 0.05f * hash01(x, z, 113);
+                } else {
+                    if (roll > 0.08f) continue;
+                    pos.x = static_cast<float>(x) + (hash01(x, z, 107) - 0.5f) * 0.9f;
+                    pos.z = static_cast<float>(z) + (hash01(x, z, 109) - 0.5f) * 0.9f;
+                    size = 0.20f + 0.25f * hash01(x, z, 113);
+                }
+
+                const Vector3 scale{
+                    size * (0.9f + 0.3f * hash01(x, z, 127)),
+                    size * (0.7f + 0.3f * hash01(x, z, 131)),
+                    size * (0.9f + 0.3f * hash01(x, z, 137))
+                };
+                pos.y = heightAt(pos.x, pos.z) + 0.3f * scale.y;
+
+                const Color tint = ColorFromHSV(
+                    90.0f + 50.0f * hash01(x, z, 139),
+                    0.55f,
+                    0.70f + 0.30f * hash01(x, z, 149));
+
+                m_rocks.push_back({pos, scale, hash01(x, z, 151) * 2.0f * PI, tint});
+            }
+        }
+    }
+
+    void Terrain::buildRockMesh() {
+        constexpr int rings = 5;
+        constexpr int segments = 7;
+        const Vector3 sun = Vector3Normalize({-0.5f, 0.8f, -0.3f});
+
+        const auto point = [](const int r, const int s) {
+            const int seam = (r == 0 || r == rings) ? 0 : s % segments;
+            const float radius = 0.8f + 0.4f * hash01(r, seam, 61);
+            const float theta = PI * static_cast<float>(r) / rings;
+            const float phi = 2.0f * PI * static_cast<float>(s % segments) / segments;
+            return Vector3{
+                radius * std::sin(theta) * std::cos(phi),
+                radius * std::cos(theta),
+                radius * std::sin(theta) * std::sin(phi)
+            };
+        };
+
+        std::vector<float> vertices, normals, texcoords;
+        std::vector<unsigned char> colors;
+
+        const auto addTriangle = [&](const Vector3 a, const Vector3 b, const Vector3 c) {
+            const Vector3 cross = Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a));
+            if (Vector3Length(cross) < 1e-5f) {
+                return;
+            }
+            const Vector3 n = Vector3Normalize(cross);
+            const float light = 0.45f + 0.55f * std::max(0.0f, Vector3DotProduct(n, sun));
+            const auto shade = static_cast<unsigned char>(255.0f * light);
+
+            for (const Vector3 &v: {a, b, c}) {
+                vertices.insert(vertices.end(), {v.x, v.y, v.z});
+                normals.insert(normals.end(), {n.x, n.y, n.z});
+                texcoords.insert(texcoords.end(), {0.0f, 0.0f});
+                colors.insert(colors.end(), {shade, shade, shade, 255});
+            }
+        };
+
+        for (int r = 0; r < rings; ++r) {
+            for (int s = 0; s < segments; ++s) {
+                const Vector3 a = point(r, s);
+                const Vector3 b = point(r, s + 1);
+                const Vector3 c = point(r + 1, s);
+                const Vector3 d = point(r + 1, s + 1);
+                addTriangle(a, b, c);
+                addTriangle(b, d, c);
+            }
+        }
+
+        m_rockMesh = {};
+        m_rockMesh.vertexCount = static_cast<int>(vertices.size() / 3);
+        m_rockMesh.triangleCount = m_rockMesh.vertexCount / 3;
+
+        m_rockMesh.vertices = static_cast<float *>(
+            MemAlloc(static_cast<unsigned int>(vertices.size() * sizeof(float))));
+        m_rockMesh.normals = static_cast<float *>(
+            MemAlloc(static_cast<unsigned int>(normals.size() * sizeof(float))));
+        m_rockMesh.texcoords = static_cast<float *>(
+            MemAlloc(static_cast<unsigned int>(texcoords.size() * sizeof(float))));
+        m_rockMesh.colors = static_cast<unsigned char *>(
+            MemAlloc(static_cast<unsigned int>(colors.size())));
+
+        std::copy(vertices.begin(), vertices.end(), m_rockMesh.vertices);
+        std::copy(normals.begin(), normals.end(), m_rockMesh.normals);
+        std::copy(texcoords.begin(), texcoords.end(), m_rockMesh.texcoords);
+        std::copy(colors.begin(), colors.end(), m_rockMesh.colors);
+
+        UploadMesh(&m_rockMesh, false);
+        m_rockMaterial = LoadMaterialDefault();
+        m_rockMeshReady = true;
+    }
+
+    void Terrain::scatterRocks() {
+        m_rocks.clear();
+
+        const int w = static_cast<int>(m_width);
+        const int h = static_cast<int>(m_height);
+
+        for (int z = -MARGIN; z < h + MARGIN; ++z) {
+            for (int x = -MARGIN; x < w + MARGIN; ++x) {
+                const bool inside = x >= 0 && x < w && z >= 0 && z < h;
+                const float roll = hash01(x, z, 53);
+                Vector3 pos{};
+                float size;
+
+                if (inside) {
+                    const float clump = smooth(Clamp(
+                        (fbm(static_cast<float>(x) * 0.25f + 120.0f,
+                             static_cast<float>(z) * 0.25f + 120.0f) - 0.5f) / 0.25f,
+                        0.0f, 1.0f));
+                    if (roll > 0.12f + 0.15f * clump) continue;
+
+                    const Vector2 spot = CELL_SPOTS[static_cast<int>(hash01(x, z, 59) * 8.0f) % 8];
+                    pos.x = static_cast<float>(x) + spot.x + (hash01(x, z, 61) - 0.5f) * 0.12f;
+                    pos.z = static_cast<float>(z) + spot.y + (hash01(x, z, 67) - 0.5f) * 0.12f;
+                    size = 0.06f + 0.09f * hash01(x, z, 71);
+                } else {
+                    if (roll > 0.06f) continue;
+                    pos.x = static_cast<float>(x) + (hash01(x, z, 61) - 0.5f) * 0.9f;
+                    pos.z = static_cast<float>(z) + (hash01(x, z, 67) - 0.5f) * 0.9f;
+                    size = 0.15f + 0.35f * hash01(x, z, 71);
+                }
+
+                const Vector3 scale{
+                    size * (0.9f + 0.4f * hash01(x, z, 73)),
+                    size * (0.55f + 0.30f * hash01(x, z, 79)),
+                    size * (0.9f + 0.4f * hash01(x, z, 83))
+                };
+                pos.y = heightAt(pos.x, pos.z) + 0.2f * scale.y;
+
+                const float grey = 150.0f + 70.0f * hash01(x, z, 89);
+                const Color tint{
+                    static_cast<unsigned char>(grey + 10.0f),
+                    static_cast<unsigned char>(grey),
+                    static_cast<unsigned char>(grey - 10.0f),
+                    255
+                };
+
+                m_rocks.push_back({pos, scale, hash01(x, z, 97) * 2.0f * PI, tint});
+            }
+        }
+    }
+
+    void Terrain::drawRocks() const {
+        if (!m_rockMeshReady) {
+            return;
+        }
+
+        Material material = m_rockMaterial;
+        for (const auto &[position, scale, angle, tint]: m_rocks) {
+            material.maps[MATERIAL_MAP_DIFFUSE].color = tint;
+            const Matrix transform = MatrixMultiply(
+                MatrixMultiply(MatrixScale(scale.x, scale.y, scale.z), MatrixRotateY(angle)),
+                MatrixTranslate(position.x, position.y, position.z));
+            DrawMesh(m_rockMesh, material, transform);
+        }
     }
 
     void Terrain::scatterTrees() {
@@ -180,19 +371,35 @@ namespace gui {
                 const float roll = hash01(x, z, 7);
                 Vector3 pos{};
 
+                float scale;
+
                 if (inside) {
-                    if (roll > 0.04f) continue;
-                    pos.x = static_cast<float>(x) + 0.5f;
-                    pos.z = static_cast<float>(z) + 0.5f;
+                    const float clump = smooth(Clamp(
+                        (fbm(static_cast<float>(x) * 0.2f + 50.0f,
+                             static_cast<float>(z) * 0.2f + 50.0f) - 0.5f) / 0.25f,
+                        0.0f, 1.0f));
+                    const int inner = std::min({x, w - 1 - x, z, h - 1 - z});
+                    const float edge = 1.0f - smooth(Clamp(static_cast<float>(inner) / 5.0f, 0.0f, 1.0f));
+                    if (roll > 0.03f + 0.22f * clump + 0.15f * edge) continue;
+
+                    const float cornerX = hash01(x, z, 19) < 0.5f ? -0.5f : 0.5f;
+                    const float cornerZ = hash01(x, z, 23) < 0.5f ? -0.5f : 0.5f;
+                    pos.x = static_cast<float>(x) + cornerX + (hash01(x, z, 29) - 0.5f) * 0.2f;
+                    pos.z = static_cast<float>(z) + cornerZ + (hash01(x, z, 37) - 0.5f) * 0.2f;
+                    scale = (0.5f + hash01(x, z, 17) * 0.35f) * (1.0f + 0.6f * edge);
                 } else {
                     if (roll > 0.25f) continue;
                     pos.x = static_cast<float>(x) + (hash01(x, z, 11) - 0.5f) * 0.9f;
                     pos.z = static_cast<float>(z) + (hash01(x, z, 13) - 0.5f) * 0.9f;
+                    scale = 1.0f + hash01(x, z, 17) * 0.8f;
                 }
 
                 pos.y = heightAt(pos.x, pos.z);
-                const float scale = inside ? 0.7f : 1.0f + hash01(x, z, 17) * 0.8f;
-                m_trees.push_back({pos, scale});
+                const Color leaves = ColorFromHSV(
+                    100.0f + 40.0f * hash01(x, z, 31),
+                    0.6f,
+                    0.35f + 0.25f * hash01(x, z, 41));
+                m_trees.push_back({pos, scale, leaves});
             }
         }
     }
@@ -204,10 +411,10 @@ namespace gui {
     }
 
     void Terrain::drawTrees() const {
-        for (const auto &[b, s]: m_trees) {
+        for (const auto &[b, s, leaves]: m_trees) {
             DrawCylinder(b, 0.05f * s, 0.07f * s, 0.30f * s, 6, BROWN);
-            DrawCylinder({b.x, b.y + 0.25f * s, b.z}, 0.0f, 0.32f * s, 0.55f * s, 7, DARKGREEN);
-            DrawCylinder({b.x, b.y + 0.50f * s, b.z}, 0.0f, 0.24f * s, 0.45f * s, 7, GREEN);
+            DrawCylinder({b.x, b.y + 0.25f * s, b.z}, 0.0f, 0.32f * s, 0.55f * s, 7, leaves);
+            DrawCylinder({b.x, b.y + 0.50f * s, b.z}, 0.0f, 0.24f * s, 0.45f * s, 7, ColorBrightness(leaves, 0.2f));
         }
     }
 
@@ -217,6 +424,15 @@ namespace gui {
         }
         m_chunks.clear();
         m_trees.clear();
+        m_rocks.clear();
+        if (m_rockMeshReady) {
+            UnloadMesh(m_rockMesh);
+            m_rockMeshReady = false;
+        }
+        if (m_rockMaterial.maps != nullptr) {
+            MemFree(m_rockMaterial.maps);
+            m_rockMaterial = {};
+        }
         m_width = m_height = 0;
         if (m_material.maps != nullptr) {
             MemFree(m_material.maps);

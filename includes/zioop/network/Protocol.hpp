@@ -31,7 +31,8 @@ namespace network {
             DISCONNECT,
             // GUI
             GET_MATRIX,
-            GET_CLIENTS
+            GET_CLIENTS,
+            INVOCATION
         };
 
         enum class ResponseType : std::uint16_t {

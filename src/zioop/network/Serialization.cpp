@@ -4,25 +4,24 @@
 
 namespace network {
 
-
     nlohmann::json serializeResource(const core::ObservedResource &resource) {
         return {
             {"type", static_cast<int>(resource.type)},
-            {"rottng", resource.rotting}
+            {"rotting", resource.rotting}
         };
     }
 
-    nlohmann::json serializeInventory(
-        const std::vector<core::InventoryResource> &inventory
-    ) {
-        nlohmann::json items = nlohmann::json::array();
-        for (const auto &resource: inventory) {
+    nlohmann::json serializeInventory(const core::InventoryResult &inventory) {
+        nlohmann::json items = nlohmann::json::array({
+            {"agentId", inventory.base.agentId},
+        });
+
+        for (const auto &resource: inventory.inventory) {
             items.push_back({
                 {"type", resource.type},
                 {"quantity", resource.quantity}
             });
         }
-
         return {
             {"resources", items}
         };
@@ -30,7 +29,8 @@ namespace network {
 
     nlohmann::json serializeLook(const core::LookResult &observation) {
         nlohmann::json payload = {
-            {"cells", nlohmann::json::array()}
+            {"cells", nlohmann::json::array()},
+            {"agentID", observation.base.agentId}
         };
 
         for (const auto &cell: observation.cells) {
@@ -59,40 +59,57 @@ namespace network {
         return payload;
     }
 
-    nlohmann::json serializePosition(const core::Position &position) {
+    nlohmann::json serializePosition(const core::MoveResult &move) {
         return {
+            {"agentID", move.base.agentId},
             {
                 "position", {
-                    {"x", position.x},
-                    {"y", position.y}
+                    {"x", move.position.x},
+                    {"y", move.position.y}
                 }
             }
         };
     }
 
-    nlohmann::json serializeMatrix(const core::MatrixSnapshot &snapshot) {
+    nlohmann::json serializeHello(const core::HelloResult &hello) {
+        return {
+            {"agentID", hello.base.agentId},
+            {
+                "position", {
+                    {"x", hello.position.x},
+                    {"y", hello.position.y}
+                }
+            }
+        };
+    }
+
+    nlohmann::json serializeMatrix(const core::MatrixResult &snapshot) {
         nlohmann::json resources = nlohmann::json::array();
         nlohmann::json agents = nlohmann::json::array();
 
-        for (const auto &resource: snapshot.resources) {
-            auto resourceJson = serializePosition(resource.position);
+        for (const auto &resource: snapshot.snapshot.resources) {
+            auto resourceJson = serializePosition({
+                .position = resource.position,
+            });
 
-            resourceJson["type"] = static_cast<int>(resource.type);
+            resourceJson["type"] = resource.type;
             resourceJson["rotting"] = resource.rotting;
             resourceJson["subCell"] = resource.subCell;
 
             resources.push_back(std::move(resourceJson));
         }
 
-        for (const auto &agent: snapshot.agents) {
-            auto agentJson = serializePosition(agent.position);
+        for (const auto &agent: snapshot.snapshot.agents) {
+            auto agentJson = serializePosition({
+                .position = agent.position,
+            });
 
             agentJson["agentId"] = agent.agentId;
             agentJson["subCell"] = agent.subCell;
             agentJson["health"] = agent.health;
             agentJson["level"] = agent.level;
 
-            auto& inventoryJson = agentJson["inventory"] = nlohmann::json::array();
+            auto &inventoryJson = agentJson["inventory"] = nlohmann::json::array();
             for (const auto &item: agent.inventory) {
                 inventoryJson.push_back({
                     {"type", item.type},
@@ -106,8 +123,8 @@ namespace network {
         return {
             {
                 "matrix", {
-                    {"xSize", snapshot.sizeX},
-                    {"ySize", snapshot.sizeY},
+                    {"xSize", snapshot.snapshot.sizeX},
+                    {"ySize", snapshot.snapshot.sizeY},
                     {
                         "data", {
                             {"resources", std::move(resources)},
@@ -116,6 +133,13 @@ namespace network {
                     }
                 }
             }
+        };
+    }
+
+    nlohmann::json serializeRitual(const core::RitualResult &ritual) {
+        return {
+            {"agentID", ritual.base.agentId},
+            {"status", static_cast<int>(ritual.result)}
         };
     }
 }

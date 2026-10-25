@@ -48,7 +48,7 @@ namespace core {
 
         [[nodiscard]]
         Position getPosition() const {
-            return {m_pos.x, m_pos.y};
+            return {.x = m_pos.x, .y = m_pos.y};
         }
 
         void addResource(ResourceType type);

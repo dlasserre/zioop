@@ -18,30 +18,14 @@ namespace core {
     public:
         static constexpr std::chrono::seconds RitualTimePerLevel{30};
 
-        struct AgentPlacement {
+        struct InitPlacement {
             std::size_t agentId;
             Position position;
-        };
-
-        enum class AttackResult {
-            KILLED,
-            RITUAL_IN_PROGRESS,
-            TARGET_NOT_FOUND,
-            SAME_OWNER,
-            TOO_FAR,
-            TARGET_TOO_STRONG,
-            DAMAGED
         };
 
         struct TakeResult {
             bool taken;
             std::vector<InventoryResource> inventory;
-        };
-
-        enum class RitualStartResult {
-            STARTED,
-            ALREADY_IN_PROGRESS,
-            NOT_ENOUGH_RESOURCES
         };
 
         struct RitualCompleted {
@@ -58,13 +42,16 @@ namespace core {
         );
 
         [[nodiscard]]
-        std::optional<AgentPlacement> addAgent(
-            std::size_t clientId,
-            ANGLE angle
+        std::optional<InitPlacement> initClient(
+            std::size_t clientId
+        );
+
+        std::optional<InitPlacement> createAgent(
+            std::size_t clientId
         );
 
         [[nodiscard]]
-        std::optional<Position> move(
+        std::optional<MoveResult> move(
             std::size_t clientId,
             std::size_t agentId,
             Direction direction
@@ -75,7 +62,7 @@ namespace core {
             std::size_t clientId,
             std::size_t agentId,
             Direction direction
-        ) const;
+        );
 
         [[nodiscard]]
         std::optional<TakeResult> take(
@@ -85,13 +72,13 @@ namespace core {
         );
 
         [[nodiscard]]
-        std::optional<std::vector<InventoryResource> > inventory(
+        std::optional<InventoryResult> inventory(
             std::size_t clientId,
             std::size_t agentId
         );
 
         [[nodiscard]]
-        std::optional<RitualStartResult> ritual(
+        std::optional<RitualResult> ritual(
             std::size_t clientId,
             std::size_t agentId
         );
@@ -108,13 +95,20 @@ namespace core {
         void removeClientAgent(std::size_t clientId);
 
     private:
-        struct AgentEntry {
-            std::size_t clientId;
-            std::unique_ptr<Agent> agent;
-        };
+
+        Agent* findAgentUnlocked(std::size_t clientId, std::size_t agentId);
+        Agent* findAgentUnlocked(std::size_t agentId);
+
+        template <typename F>
+        auto withAgent(std::size_t clientId, std::size_t agentId, F&& f);
+
+        std::optional<InitPlacement> placeAgent(std::size_t clientId);
+
+        std::optional<InitPlacement> placeAgent(std::vector<std::unique_ptr<Agent>>& agents);
 
         mutable std::mutex m_stateMutex;
         Matrix m_matrix;
-        std::unordered_map<std::size_t, AgentEntry> m_agents;
+        // ClientId
+        std::unordered_map<std::size_t, std::vector<std::unique_ptr<Agent>>> m_agents;
     };
 }

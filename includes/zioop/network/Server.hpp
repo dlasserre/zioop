@@ -57,6 +57,11 @@ namespace network {
             const Protocol::Message &message
         );
 
+        void broadcast(
+            Connection &connection,
+            const Protocol::Message &message
+        );
+
         void hello(
             Connection &connection,
             const Protocol::Message &message
@@ -70,7 +75,7 @@ namespace network {
         void getMatrix(
             Connection &connection,
             const Protocol::Message &message
-        );
+        ) const;
 
         void lookingAt(
             Connection &connection,
@@ -99,6 +104,11 @@ namespace network {
         );
 
         void attack(
+            Connection &connection,
+            const Protocol::Message &message
+        );
+
+        void invocation(
             Connection &connection,
             const Protocol::Message &message
         );

@@ -8,7 +8,7 @@
 namespace {
     using namespace std::chrono_literals;
     using Clock = std::chrono::steady_clock;
-    using Result = core::Game::RitualStartResult;
+    using Result = core::RitualStartResult;
     constexpr auto Fruit = core::ResourceType::APPLE;
 
     void check(const bool condition, const std::string_view message) {
@@ -29,7 +29,7 @@ namespace {
     core::Matrix makeMatrix() {
         core::Matrix matrix(3, 3);
         core::Agent seeder;
-        check(matrix.addAgent(seeder, core::BOTTOM_RIGHT).has_value(), "place seeder");
+        check(matrix.addAgent(seeder).has_value(), "place seeder");
         auto *cell = seeder.getCell();
         while (cell->take(seeder, Fruit)) {}
         for (int i = 0; i < 30; ++i) {
@@ -42,16 +42,16 @@ namespace {
     void testAgentDeadline() {
         auto matrix = makeMatrix();
         core::Agent agent;
-        check(matrix.addAgent(agent, core::BOTTOM_RIGHT).has_value(), "place agent");
+        check(matrix.addAgent(agent).has_value(), "place agent");
         for (int i = 0; i < 12; ++i) {
             check(agent.take(Fruit), "collect fruit");
         }
 
         const auto now = Clock::time_point{};
-        check(agent.startRitual(10, 60s, now), "start ritual");
+        check(agent.startRitual(60s, now), "start ritual");
         check(fruitCount(agent.getInventory()) == 2, "consume exactly ten fruits");
         check(agent.getLevel() == 1, "no level up at start");
-        check(!agent.startRitual(1, 1s, now), "reject duplicate ritual");
+        check(!agent.startRitual(1s, now), "reject duplicate ritual");
         check(fruitCount(agent.getInventory()) == 2, "duplicate must not consume fruit");
         check(!agent.take(Fruit), "ritual blocks collection");
         check(!agent.move(matrix, core::Direction::WEST), "ritual blocks movement");
@@ -75,8 +75,8 @@ namespace {
 
     void testGameRitual() {
         core::Game game(makeMatrix());
-        const auto agent = game.addAgent(10, core::BOTTOM_RIGHT);
-        const auto other = game.addAgent(20, core::TOP_LEFT);
+        const auto agent = game.initClient(10);
+        const auto other = game.initClient(20);
         check(agent.has_value() && other.has_value(), "place game agents");
         const auto id = agent->agentId;
 
@@ -118,14 +118,14 @@ namespace {
 
     void testDisconnection() {
         core::Game game(makeMatrix());
-        const auto agent = game.addAgent(10, core::BOTTOM_RIGHT);
+        const auto agent = game.initClient(10);
         check(agent.has_value(), "place disconnecting agent");
         collect(game, 10, agent->agentId, 10);
         check(game.ritual(10, agent->agentId) == Result::STARTED, "start before disconnect");
         game.removeClientAgent(10);
         check(game.tick(Clock::now() + 1h).empty(), "removed agent cannot complete ritual");
         check(!game.inventory(10, agent->agentId), "removed inventory is inaccessible");
-        const auto replacement = game.addAgent(20, core::BOTTOM_RIGHT);
+        const auto replacement = game.initClient(20);
         check(replacement.has_value(), "disconnection frees cell");
         check(game.tick(Clock::now() + 2h).empty(), "no completion for replacement agent");
     }

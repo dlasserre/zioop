@@ -1,6 +1,13 @@
 #include <utility>
+#include <functional>
+#include <mutex>
+#include <optional>
+#include <type_traits>
 
 #include "zioop/core/Game.hpp"
+
+#include <ranges>
+
 #include "zioop/core/Matrix.hpp"
 
 namespace core {
@@ -10,20 +17,77 @@ namespace core {
         : m_matrix(std::move(matrix)) {
     }
 
+    Agent *Game::findAgentUnlocked(std::size_t agentId) {
+        for (const auto &val: m_agents | std::views::values) {
+            auto found = std::ranges::find_if(
+                val.begin(),
+                val.end(),
+                [&](const auto &agent) {
+                    return agent->getId() == agentId;
+                }
+            );
+            if (found != val.end()) {
+                return found->get();
+            }
+        }
+
+        return nullptr;
+    }
+
+    Agent *Game::findAgentUnlocked(const std::size_t clientId, std::size_t agentId) {
+        const auto it = m_agents.find(clientId);
+
+        if (it == m_agents.end() || it->first != clientId) {
+            return nullptr;
+        }
+
+        const auto ait = std::ranges::find_if(
+            it->second.begin(),
+            it->second.end(),
+            [&](const auto &agent) {
+                return agent->getId() == agentId;
+            });
+
+        if (ait == it->second.end()) {
+            return nullptr;
+        }
+
+        return ait->get();
+    }
+
+    template<typename F>
+    auto Game::withAgent(const std::size_t clientId, const std::size_t agentId, F &&f) {
+        using R = std::invoke_result_t<F, Agent &>;
+
+        std::scoped_lock lock(m_stateMutex);
+        Agent *agent = findAgentUnlocked(clientId, agentId);
+
+        if constexpr (std::is_void_v<R>) {
+            if (!agent) return false;
+            f(*agent);
+            return true;
+        } else {
+            if (!agent) return std::optional<R>{};
+            return std::optional<R>{f(*agent)};
+        }
+    }
+
     std::vector<Game::RitualCompleted> Game::tick(
         const std::chrono::steady_clock::time_point now
     ) {
-        std::lock_guard<std::mutex> lock_guard(m_stateMutex);
+        std::scoped_lock lock_guard(m_stateMutex);
         m_matrix.updateResources();
 
         std::vector<RitualCompleted> completed;
-        for (const auto &[agentId, entry]: m_agents) {
-            if (entry.agent->completeRitual(now)) {
-                completed.push_back({
-                    .clientId = entry.clientId,
-                    .agentId = agentId,
-                    .level = entry.agent->getLevel()
-                });
+        for (const auto &[clientId, agents]: m_agents) {
+            for (const auto &agent: agents) {
+                if (agent->completeRitual(now)) {
+                    completed.push_back({
+                        .clientId = clientId,
+                        .agentId = agent->getId(),
+                        .level = agent->getLevel()
+                    });
+                }
             }
         }
         return completed;
@@ -34,87 +98,122 @@ namespace core {
         const std::size_t agentId,
         const ResourceType type
     ) {
-        std::lock_guard<std::mutex> lock_guard(m_stateMutex);
-        const auto it = m_agents.find(agentId);
-        if (it == m_agents.end() || it->second.clientId != clientId) {
-            return std::nullopt;
-        }
-
-        Agent &agent = *it->second.agent;
-
-        return TakeResult{
-            .taken = agent.take(type),
-            .inventory = agent.getInventory()
-        };
+        return withAgent(clientId, agentId, [&](Agent &agent) -> std::optional<TakeResult> {
+            return TakeResult{
+                .taken = agent.take(type),
+                .inventory = agent.getInventory()
+            };
+        }).value_or(std::nullopt);
     }
 
-    std::optional<Game::AttackResult> Game::attack(
+    std::optional<AttackResult> Game::attack(
         const std::size_t clientId,
         const std::size_t agentId,
         const std::size_t targetId
     ) {
-        std::lock_guard<std::mutex> lock_guard(m_stateMutex);
+        return withAgent(clientId, agentId, [&](const Agent &agent) -> std::optional<AttackResult> {
+            if (agent.isRitualInProgress()) {
+                return AttackResult::RITUAL_IN_PROGRESS;
+            }
 
-        const auto it = m_agents.find(agentId);
-        if (it == m_agents.end() || it->second.clientId != clientId) {
-            return std::nullopt;
-        }
-        const Agent &agent = *it->second.agent;
-        if (agent.isRitualInProgress()) {
-            return AttackResult::RITUAL_IN_PROGRESS;
-        }
+            const auto target = findAgentUnlocked(targetId);
+            if (target == nullptr) {
+                return AttackResult::TARGET_NOT_FOUND;
+            }
 
-        const auto targetIt = m_agents.find(targetId);
-        if (targetIt == m_agents.end()) {
-            return AttackResult::TARGET_NOT_FOUND;
-        }
+            if (!agent.getCell() || agent.getCell() != target->getCell()) {
+                return AttackResult::TOO_FAR;
+            }
 
-        if (targetIt->second.clientId == clientId) {
-            return AttackResult::SAME_OWNER;
-        }
+            if (agent.getLevel() < target->getLevel()) {
+                return AttackResult::TARGET_TOO_STRONG;
+            }
 
-        Agent &target = *targetIt->second.agent;
-        if (!agent.getCell() ||agent.getCell() != target.getCell()) {
-            return AttackResult::TOO_FAR;
-        }
+            target->damage(agent.getLevel() * DAMAGE);
+            if (target->getHealth() == 0) {
+                m_matrix.removeAgent(*target);
+                m_agents.erase(targetId);
+                return AttackResult::KILLED;
+            }
 
-        if (agent.getLevel() < target.getLevel()) {
-            return AttackResult::TARGET_TOO_STRONG;
-        }
-
-        target.damage(agent.getLevel() * DAMAGE);
-        if (target.getHealth() == 0) {
-            m_matrix.removeAgent(target);
-            m_agents.erase(targetId);
-            return AttackResult::KILLED;
-        }
-
-        return AttackResult::DAMAGED;
+            return AttackResult::DAMAGED;
+        }).value_or(std::nullopt);
     }
 
-    std::optional<Game::AgentPlacement> Game::addAgent(
-        const std::size_t clientId,
-        const ANGLE angle
+    std::optional<Game::InitPlacement> Game::placeAgent(
+        std::vector<std::unique_ptr<Agent> > &agents
     ) {
-        std::lock_guard<std::mutex> lock(m_stateMutex);
         auto agent = std::make_unique<Agent>();
-        const auto agentId = agent->getId();
 
-        auto [it, inserted] = m_agents.try_emplace(
-            agentId,
-            AgentEntry{
-                .clientId = clientId,
-                .agent = std::move(agent)
-            }
+        const auto position = m_matrix.addAgent(
+            *agent
         );
+
+        if (!position) {
+            return std::nullopt;
+        }
+        agents.push_back(std::move(agent));
+
+        return InitPlacement{
+            .agentId = agent->getId(),
+            .position = *position
+        };
+    }
+
+    std::optional<Game::InitPlacement> Game::placeAgent(
+        const std::size_t clientId
+    ) {
+        auto [it, _] = m_agents.try_emplace(clientId);
+
+        it->second.push_back(std::make_unique<Agent>());
+
+        const auto position = m_matrix.addAgent(
+            *it->second.back()
+        );
+
+        return InitPlacement{
+            .agentId = it->second.back()->getId(),
+            .position = *position
+        };
+    }
+
+    std::optional<Game::InitPlacement> Game::createAgent(
+        const std::size_t clientId
+    ) {
+        std::scoped_lock lock(m_stateMutex);
+
+        const auto it = m_agents.find(clientId);
+
+        if (it == m_agents.end()) {
+            return std::nullopt;
+        }
+
+        it->second.push_back(std::make_unique<Agent>());
+
+        const auto position = m_matrix.addAgent(
+            *it->second.back()
+        );
+
+        return InitPlacement{
+            .agentId = it->second.back()->getId(),
+            .position = *position
+        };
+    }
+
+    std::optional<Game::InitPlacement> Game::initClient(
+        const std::size_t clientId
+    ) {
+        std::scoped_lock lock(m_stateMutex);
+
+        auto [it, inserted] = m_agents.try_emplace(clientId);
 
         if (!inserted) {
             return std::nullopt;
         }
+        it->second.push_back(std::make_unique<Agent>());
 
         const auto position = m_matrix.addAgent(
-            *it->second.agent,
-            angle
+            *it->second.back()
         );
 
         if (!position) {
@@ -122,82 +221,70 @@ namespace core {
             return std::nullopt;
         }
 
-        return AgentPlacement{
-            .agentId = agentId,
+        return InitPlacement{
+            .agentId = it->second.back()->getId(),
             .position = *position
         };
     }
 
-    std::optional<Position> Game::move(
-        std::size_t clientId,
-        std::size_t agentId,
-        Direction direction
+    std::optional<MoveResult> Game::move(
+        const std::size_t clientId,
+        const std::size_t agentId,
+        const Direction direction
     ) {
-        std::lock_guard<std::mutex> lock_guard(m_stateMutex);
-
-        const auto it = m_agents.find(agentId);
-
-        if (it == m_agents.end() || it->second.clientId != clientId) {
-            return std::nullopt;
-        }
-
-        return it->second.agent->move(m_matrix, direction);
+        return withAgent(clientId, agentId,
+        [&](Agent &agent) -> std::optional<MoveResult> {
+             return MoveResult{
+                 .base = {.agentId = agentId},
+                 .position = agent.move(m_matrix, direction)
+             };
+        }).value_or(std::nullopt);
     }
 
-    std::optional<std::vector<InventoryResource> > Game::inventory(
+    std::optional<InventoryResult> Game::inventory(
         const std::size_t clientId,
         const std::size_t agentId
     ) {
-        std::lock_guard<std::mutex> lock_guard(m_stateMutex);
-        const auto it = m_agents.find(agentId);
-
-        if (it == m_agents.end() || it->second.clientId != clientId) {
-            return std::nullopt;
-        }
-
-        return it->second.agent->getInventory();
+        return withAgent(clientId, agentId, [&](const Agent &agent) -> std::optional<InventoryResult> {
+            return InventoryResult{
+                .base = { .agentId = agentId },
+                .inventory = agent.getInventory()
+            };
+        }).value_or(std::nullopt);
     }
 
-    std::optional<Game::RitualStartResult> Game::ritual(
+    std::optional<RitualResult> Game::ritual(
         const std::size_t clientId,
         const std::size_t agentId
     ) {
-        std::lock_guard<std::mutex> lock(m_stateMutex);
-        const auto it = m_agents.find(agentId);
-        if (it == m_agents.end() || it->second.clientId != clientId) {
-            return std::nullopt;
-        }
-
-        Agent &agent = *it->second.agent;
-        if (agent.isRitualInProgress()) {
-            return RitualStartResult::ALREADY_IN_PROGRESS;
-        }
-
-        const auto duration = RitualTimePerLevel * (agent.getLevel() + 1);
-        if (!agent.startRitual(duration, std::chrono::steady_clock::now())) {
-            return RitualStartResult::NOT_ENOUGH_RESOURCES;
-        }
-        return RitualStartResult::STARTED;
+        return withAgent(clientId, agentId, [&](Agent &agent) -> std::optional<RitualResult> {
+            RitualResult result{
+                .base = {.agentId = agentId}
+            };
+            if (agent.isRitualInProgress()) {
+                result.result = RitualStartResult::ALREADY_IN_PROGRESS;
+                return result;
+            }
+            const auto duration = RitualTimePerLevel * (agent.getLevel() + 1);
+            if (!agent.startRitual(duration, std::chrono::steady_clock::now())) {
+                result.result = RitualStartResult::NOT_ENOUGH_RESOURCES;
+            }
+            return result;
+        }).value_or(std::nullopt);
     }
 
     std::optional<LookResult> Game::look(
         const std::size_t clientId,
         const std::size_t agentId,
         const Direction direction
-    ) const {
-        std::lock_guard<std::mutex> lock_guard(m_stateMutex);
-
-        const auto it = m_agents.find(agentId);
-
-        if (it == m_agents.end() || it->second.clientId != clientId) {
-            return std::nullopt;
-        }
-
-        return it->second.agent->look(m_matrix, direction);
+    ) {
+        return withAgent(clientId, agentId, [&](const Agent &agent) -> std::optional<LookResult> {
+            return agent.look(m_matrix, direction);
+        }).value_or(std::nullopt);
     }
 
     MatrixSnapshot Game::getMatrix() const {
-        std::lock_guard<std::mutex> lock_guard(m_stateMutex);
+        std::scoped_lock lock_guard(m_stateMutex);
 
         MatrixSnapshot result{
             .sizeX = m_matrix.getSizeX(),
@@ -206,51 +293,47 @@ namespace core {
 
         for (const auto &column: m_matrix.getMatrix()) {
             for (const auto &cell: column) {
-                for (const auto &resource: cell->getResources()) {
+                for (const auto &[subCell, type, rotting]: cell->getResources()) {
                     result.resources.push_back({
                         .position = cell->getPosition(),
-                        .subCell = resource.subCell,
-                        .type = resource.type,
-                        .rotting = resource.rotting
+                        .subCell = subCell,
+                        .type = type,
+                        .rotting = rotting
                     });
                 }
+
+                for (const auto &agent: cell->getAgents()) {
+                    if (!agent) continue;
+                    AgentSnapshot snapshot{
+                        .agentId = agent->getId(),
+                        .health = agent->getHealth(),
+                        .level = agent->getLevel(),
+                        .position = cell->getPosition(),
+                        .subCell = cell->getSubCell(*agent).value_or(0),
+                    };
+                    for (const auto &[type, quantity]: agent->getInventory()) {
+                        snapshot.inventory.push_back({.type = type, .quantity = quantity});
+                    }
+
+                    result.agents.push_back(snapshot);
+                }
             }
-        }
-
-        for (const auto &[agentId, entry]: m_agents) {
-            const auto *cell = entry.agent->getCell();
-            if (!cell) {
-                continue;
-            }
-
-            AgentSnapshot snapshot{
-                .agentId = agentId,
-                .health = entry.agent->getHealth(),
-                .level = entry.agent->getLevel(),
-                .position = cell->getPosition(),
-                .subCell = cell->getSubCell(*entry.agent).value_or(0),
-            };
-
-            for (const auto &[type, quantity]: entry.agent->getInventory()) {
-                snapshot.inventory.push_back({.type = type, .quantity = quantity});
-            }
-
-            result.agents.push_back(snapshot);
         }
 
         return result;
     }
 
-    void Game::removeClientAgent(std::size_t clientId) {
-        std::lock_guard<std::mutex> lock_guard(m_stateMutex);
+    void Game::removeClientAgent(const std::size_t clientId) {
+        std::scoped_lock lock_guard(m_stateMutex);
 
-        for (auto it = m_agents.begin(); it != m_agents.end();) {
-            if (it->second.clientId == clientId) {
-                m_matrix.removeAgent(*it->second.agent);
-                it = m_agents.erase(it);
-            } else {
-                ++it;
-            }
+        const auto it = m_agents.find(clientId);
+        if (it == m_agents.end()) {
+            return;
         }
+
+        for (const auto &agent: it->second) {
+            m_matrix.removeAgent(*agent);
+        }
+        m_agents.erase(it);
     }
 }
