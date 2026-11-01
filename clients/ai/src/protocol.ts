@@ -1,7 +1,8 @@
 import { Socket } from "node:net";
 
 // Protocol.hpp: uint16 type + uint32 UTF-8 payload length, both in network order.
-export const Message = { HELLO: 0, MOVE: 1, LOOK: 3, TAKE: 4, ATTACK: 6, INVENTORY: 8, RITUAL: 9, DISCONNECT: 10 } as const;
+export const Message = { HELLO: 0, MOVE: 1, LOOK: 2, TAKE: 3, ATTACK: 5, INVENTORY: 7, RITUAL: 8, DISCONNECT: 9 } as const;
+export const Response = { OK: 0, KO: 1, EVENT: 5 } as const;
 export const Direction = { NORTH: 0, SOUTH: 90, EAST: 180, WEST: 270 } as const;
 export type GameReply = { ok: boolean; data: unknown };
 const MAX_PAYLOAD = 1024 * 1024;
@@ -54,9 +55,10 @@ export class GameConnection {
     this.socket.on("data", (chunk: Buffer) => {
       try {
         for (const frame of this.decoder.push(chunk)) {
+          if (frame.type === Response.EVENT) continue;
           if (!this.pending) throw new Error("Unexpected server response; cannot correlate commands");
-          if (frame.type !== 0 && frame.type !== 1) throw new Error(`Unknown response type ${frame.type}`);
-          const reply: GameReply = { ok: frame.type === 0, data: frame.type === 0 ? JSON.parse(frame.payload) : failureReason(frame.payload) };
+          if (frame.type !== Response.OK && frame.type !== Response.KO) throw new Error(`Unknown response type ${frame.type}`);
+          const reply: GameReply = { ok: frame.type === Response.OK, data: frame.type === Response.OK ? JSON.parse(frame.payload) : failureReason(frame.payload) };
           const pending = this.pending;
           this.pending = undefined;
           pending.cleanup();

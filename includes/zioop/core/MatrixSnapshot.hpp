@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "zioop/core/Types.hpp"
@@ -26,6 +28,10 @@ namespace core {
         Position position;
         std::size_t subCell;
         std::vector<ItemInventory> inventory;
+        std::optional<std::string> message;
+        bool ritual{false};
+        std::optional<Direction> lookDirection;
+        std::size_t lookCount{0};
     };
 
     struct MatrixSnapshot {

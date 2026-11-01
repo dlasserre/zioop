@@ -50,12 +50,52 @@
 //     return EXIT_SUCCESS;
 // }
 
+#include <iostream>
+#include <ostream>
+#include <vector>
+#include <variant>
+
 namespace {
-    
+    template<class... Ts>
+    struct overloaded : Ts... { using Ts::operator()...; };
+
+    struct Died {
+        std::size_t agentId;
+    };
+
+    struct Message {
+        std::size_t agentId;
+        std::string message;
+    };
+
+    using Event = std::variant<Died, Message>;
 }
 
-int main() {
 
+struct App {
+
+    void handler(const Event& e) {
+        std::visit(overloaded{
+            [](const Died& d)  { std::cout << std::format("agent {} die \n", d.agentId); },
+                [](const Message& m)  { std::cout << std::format("message {} \n", m.agentId); },
+        }, e);
+    }
+
+};
+
+int main() {
+    App app;
+
+    const std::vector<Event> events = {
+        Died{.agentId = 10},
+        Message{.agentId = 10, .message = "Super test"},
+    };
+
+    for (const auto& e : events) {
+        app.handler(e);
+    }
+
+    return EXIT_SUCCESS;
 }
 
 

@@ -9,6 +9,8 @@
 
 #include <raylib.h>
 
+#include <optional>
+
 #include "zioop/network/Client.hpp"
 
 namespace gui {
@@ -35,6 +37,9 @@ namespace gui {
             int health{};
             std::vector<InventoryItem> inventory;
             bool ritual{false};
+            std::string message{};
+            std::optional<int> lookDirection{};
+            std::size_t lookCount{};
         };
 
         struct ResourceView {

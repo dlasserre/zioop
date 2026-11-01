@@ -5,6 +5,10 @@ if(ZIOOP_BUILD_GUI)
             Agent.cpp
             Renderer.cpp
             Terrain.cpp
+            Assets.cpp
+            DayCycle.cpp
+            Lighting.cpp
+            Typography.cpp
     )
 
     file(GLOB_RECURSE ZIOOP_GUI_HEADERS CONFIGURE_DEPENDS

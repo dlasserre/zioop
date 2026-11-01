@@ -1,7 +1,7 @@
 include(FetchContent)
 
 set(FETCHCONTENT_BASE_DIR
-        ${CMAKE_SOURCE_DIR}/.deps
+        ${CMAKE_BINARY_DIR}/_deps
         CACHE PATH "" FORCE
 )
 

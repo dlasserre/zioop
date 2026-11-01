@@ -19,7 +19,8 @@ namespace core {
     }
 
     bool Agent::consumeRequiredResourcesForLevel() {
-        const auto it = std::find_if(
+
+        const auto it = std::ranges::find_if(
             m_requiredResources.begin(),
             m_requiredResources.end(),
             [&](const LevelResources &entry) {
@@ -32,7 +33,7 @@ namespace core {
         }
 
         for (const auto &[type, requiredCount]: it->resources) {
-            const auto available = std::count_if(
+            const auto available = std::ranges::count_if(
                 m_inventory.begin(),
                 m_inventory.end(),
                 [type](const auto &item) {
@@ -48,8 +49,7 @@ namespace core {
         for (const auto &[type, requiredCount]: it->resources) {
             std::size_t remaining = requiredCount;
 
-            for (auto item = m_inventory.begin();
-                 item != m_inventory.end() && remaining > 0;) {
+            for (auto item = m_inventory.begin(); item != m_inventory.end() && remaining > 0;) {
                 if ((*item)->getType() == type) {
                     item = m_inventory.erase(item);
                     --remaining;
@@ -96,7 +96,7 @@ namespace core {
         if (!m_alive) {
             return false;
         }
-        m_health -= (m_health - damage < 0) ? damage : 0;
+        m_health -= m_health - damage < 0 ? 0 : damage;
         return true;
     }
 
@@ -204,5 +204,21 @@ namespace core {
         }
 
         return result;
+    }
+
+    void Agent::say(std::string message, const std::chrono::steady_clock::time_point until) {
+        m_speech = Speech{.message = std::move(message), .until = until};
+    }
+
+    void Agent::recordLook(const Direction direction) {
+        m_lookDirection = direction;
+        ++m_lookCount;
+    }
+
+    std::optional<std::string> Agent::getSpeech(const std::chrono::steady_clock::time_point now) const {
+        if (!m_speech || now >= m_speech->until) {
+            return std::nullopt;
+        }
+        return m_speech->message;
     }
 }

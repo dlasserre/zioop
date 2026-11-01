@@ -78,6 +78,154 @@ namespace ai {
         );
     }
 
+    void Bot::attack(const std::size_t agentId, const std::size_t targetId) {
+        std::cout << "[" << agentId << "] Attacking agent " << targetId << std::endl;
+
+        sendDecision(
+            agentId,
+            network::Protocol::MessageType::ATTACK,
+            {{"agentID", agentId}, {"targetId", targetId}}
+        );
+    }
+
+    bool Bot::isOwnAgent(const std::size_t agentId) {
+        std::lock_guard lock(m_stateMutex);
+        return m_history.contains(agentId);
+    }
+
+    void Bot::broadcast(const std::size_t agentId, const std::string &message) {
+        std::cout << "[" << agentId << "] Saying: " << message << std::endl;
+
+        sendDecision(
+            agentId,
+            network::Protocol::MessageType::BROADCAST,
+            {{"agentID", agentId}, {"message", message}}
+        );
+    }
+
+    std::optional<Bot::Heard> Bot::takeHeard(const std::size_t agentId) {
+        std::lock_guard lock(m_stateMutex);
+
+        const auto it = m_heard.find(agentId);
+        if (it == m_heard.end()) {
+            return std::nullopt;
+        }
+
+        auto heard = std::move(it->second);
+        m_heard.erase(it);
+        return heard;
+    }
+
+    void Bot::waitForRitual(const std::size_t agentId) {
+        std::lock_guard lock(m_stateMutex);
+        if (const auto event = m_ritualEvents.find(agentId); event != m_ritualEvents.end()) {
+            const auto payload = event->second;
+            m_ritualEvents.erase(event);
+            enqueue({
+                agentId,
+                {
+                    {network::Protocol::ResponseType::OK, static_cast<std::uint32_t>(payload.size())},
+                    payload
+                }
+            });
+            return;
+        }
+        std::cout << "[" << agentId << "] Waiting for the ritual to end..." << std::endl;
+        m_waiting.insert(agentId);
+    }
+
+    std::optional<std::string> Bot::takeRitualEvent(const std::size_t agentId) {
+        std::lock_guard lock(m_stateMutex);
+        const auto event = m_ritualEvents.find(agentId);
+        if (event == m_ritualEvents.end()) {
+            return std::nullopt;
+        }
+        auto payload = std::move(event->second);
+        m_ritualEvents.erase(event);
+        return payload;
+    }
+
+    void Bot::resumeAfterRitual(const std::size_t agentId, const std::string &payload) {
+        std::cout << "[" << agentId << "] Ritual completed: " << payload << std::endl;
+
+        {
+            std::lock_guard lock(m_stateMutex);
+            const auto history = m_history.find(agentId);
+            const auto pending = std::find(m_pending.begin(), m_pending.end(), agentId);
+            const bool waiting = m_waiting.erase(agentId) > 0;
+            const bool unanswered = history != m_history.end() && !history->second.empty() &&
+                                    history->second.back().command == network::Protocol::MessageType::RITUAL &&
+                                    pending != m_pending.end();
+
+            if (unanswered) {
+                m_pending.erase(pending);
+            } else if (!waiting) {
+                m_ritualEvents.insert_or_assign(agentId, payload);
+                return;
+            }
+        }
+
+        enqueue({
+            agentId,
+            {
+                {network::Protocol::ResponseType::OK, static_cast<std::uint32_t>(payload.size())},
+                payload
+            }
+        });
+    }
+
+    void Bot::listen(const std::string &payload) {
+        const auto event = nlohmann::json::parse(payload, nullptr, false);
+        if (!event.is_object()) {
+            std::cerr << "Invalid event: " << payload << std::endl;
+            return;
+        }
+
+        const auto agent = event.find("agentID");
+        const auto message = event.find("message");
+
+        if (event.value("type", std::string{}) == "Ritual" &&
+            agent != event.end() && agent->is_number_unsigned()) {
+            resumeAfterRitual(agent->get<std::size_t>(), payload);
+            return;
+        }
+        if (agent == event.end() || !agent->is_number_unsigned() ||
+            message == event.end() || !message->is_string()) {
+            std::cout << "[event] " << payload << std::endl;
+            return;
+        }
+
+        Heard heard{.message = message->get<std::string>()};
+
+        if (const auto speaker = event.find("speakerId");
+            speaker != event.end() && speaker->is_number_unsigned()) {
+            heard.speakerId = speaker->get<std::size_t>();
+        }
+
+        if (const auto direction = event.find("direction");
+            direction != event.end() && direction->is_number_unsigned()) {
+            const auto value = direction->get<std::uint16_t>();
+            for (const auto candidate: directions) {
+                if (static_cast<std::uint16_t>(candidate) == value) {
+                    heard.direction = candidate;
+                }
+            }
+        }
+
+        const auto agentId = agent->get<std::size_t>();
+        std::cout
+            << "[" << agentId << "] Heard"
+            << (heard.speakerId ? " from " + std::to_string(*heard.speakerId) : std::string{})
+            << (heard.direction
+                    ? " (direction " + std::to_string(static_cast<std::uint16_t>(*heard.direction)) + ")"
+                    : std::string{" (same cell)"})
+            << ": " << heard.message
+            << std::endl;
+
+        std::lock_guard lock(m_stateMutex);
+        m_heard.insert_or_assign(agentId, std::move(heard));
+    }
+
     void Bot::look(const std::size_t agentId, core::Direction direction) {
         nlohmann::json payload = {
             {"agentID", agentId},
@@ -144,7 +292,7 @@ namespace ai {
         nlohmann::json payload
     ) {
         {
-            std::lock_guard<std::mutex> lock(m_stateMutex);
+            std::lock_guard lock(m_stateMutex);
             auto &history = m_history[agentId];
 
             history.push_back({
@@ -283,35 +431,39 @@ namespace ai {
     network::Protocol::Response Bot::receiveResponse() const {
         using Protocol = network::Protocol;
 
-        std::uint16_t networkType{};
-        std::uint32_t networkLength{};
-
-        receiveExactly(
-            reinterpret_cast<char *>(&networkType),
-            static_cast<int>(sizeof(networkType))
-        );
-        receiveExactly(
-            reinterpret_cast<char *>(&networkLength),
-            static_cast<int>(sizeof(networkLength))
-        );
-
-        const auto type = static_cast<Protocol::ResponseType>(ntohs(networkType));
-        const std::uint32_t length = ntohl(networkLength);
         constexpr std::uint32_t MaxPayloadSize = 1024 * 1024;
 
-        if (length > MaxPayloadSize) {
-            throw std::runtime_error("Response payload too large");
+        while (true) {
+            std::uint16_t networkType{};
+            std::uint32_t networkLength{};
+
+            receiveExactly(
+                reinterpret_cast<char *>(&networkType),
+                static_cast<int>(sizeof(networkType))
+            );
+            receiveExactly(
+                reinterpret_cast<char *>(&networkLength),
+                static_cast<int>(sizeof(networkLength))
+            );
+
+            const auto type = static_cast<Protocol::ResponseType>(ntohs(networkType));
+            const std::uint32_t length = ntohl(networkLength);
+
+            if (length > MaxPayloadSize) {
+                throw std::runtime_error("Response payload too large");
+            }
+
+            std::string payload(length, '\0');
+            receiveExactly(payload.data(), static_cast<int>(payload.size()));
+
+            if (type != Protocol::ResponseType::EVENT &&
+                type != Protocol::ResponseType::OK &&
+                type != Protocol::ResponseType::KO) {
+                throw std::runtime_error("Unexpected response type");
+            }
+
+            return {{type, length}, std::move(payload)};
         }
-
-        if (type != Protocol::ResponseType::OK &&
-            type != Protocol::ResponseType::KO) {
-            throw std::runtime_error("Unexpected response type");
-        }
-
-        std::string payload(length, '\0');
-        receiveExactly(payload.data(), static_cast<int>(payload.size()));
-
-        return {{type, length}, std::move(payload)};
     }
 
     void Bot::enqueue(Incoming incoming) {
@@ -355,6 +507,10 @@ namespace ai {
             );
 
             network::Protocol::Response response = receiveResponse();
+            while (response.header.type == network::Protocol::ResponseType::EVENT) {
+                listen(response.payload);
+                response = receiveResponse();
+            }
             if (response.header.type != network::Protocol::ResponseType::OK) {
                 throw std::runtime_error(response.payload);
             }
@@ -367,7 +523,12 @@ namespace ai {
             enqueue({agentId, std::move(response)});
 
             while (!stopRequested) {
-                route(receiveResponse());
+                auto incoming = receiveResponse();
+                if (incoming.header.type == network::Protocol::ResponseType::EVENT) {
+                    listen(incoming.payload);
+                    continue;
+                }
+                route(std::move(incoming));
             }
 
             disconnect();

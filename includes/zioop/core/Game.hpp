@@ -2,15 +2,16 @@
 
 #include <chrono>
 #include <mutex>
-#include <cstddef>
+#include <queue>
 #include <memory>
 #include <optional>
 #include <unordered_map>
 
+#include "Event.hpp"
 #include "Inventory.hpp"
 #include "zioop/core/Matrix.hpp"
 #include "zioop/core/Agent.hpp"
-#include "zioop/core/LookResult.hpp"
+#include "zioop/core/Results.hpp"
 #include "zioop/core/MatrixSnapshot.hpp"
 
 namespace core {
@@ -28,18 +29,11 @@ namespace core {
             std::vector<InventoryResource> inventory;
         };
 
-        struct RitualCompleted {
-            std::size_t clientId;
-            std::size_t agentId;
-            int level;
-        };
+        std::vector<Event> drainEvents();
 
         explicit Game(Matrix matrix);
 
-        [[nodiscard]]
-        std::vector<RitualCompleted> tick(
-            std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()
-        );
+        void tick(std::chrono::steady_clock::time_point now);
 
         [[nodiscard]]
         std::optional<InitPlacement> initClient(
@@ -55,6 +49,13 @@ namespace core {
             std::size_t clientId,
             std::size_t agentId,
             Direction direction
+        );
+
+        [[nodiscard]]
+        std::optional<BroadcastResult> broadcast(
+            std::size_t clientId,
+            std::size_t agentId,
+            const std::string &message
         );
 
         [[nodiscard]]
@@ -96,6 +97,12 @@ namespace core {
 
     private:
 
+        void emitUnlocked(Event event);
+
+        std::optional<std::size_t> findOwnerUnlocked(std::size_t agentId);
+
+        std::queue<Event> m_events;
+
         Agent* findAgentUnlocked(std::size_t clientId, std::size_t agentId);
         Agent* findAgentUnlocked(std::size_t agentId);
 
@@ -103,8 +110,6 @@ namespace core {
         auto withAgent(std::size_t clientId, std::size_t agentId, F&& f);
 
         std::optional<InitPlacement> placeAgent(std::size_t clientId);
-
-        std::optional<InitPlacement> placeAgent(std::vector<std::unique_ptr<Agent>>& agents);
 
         mutable std::mutex m_stateMutex;
         Matrix m_matrix;

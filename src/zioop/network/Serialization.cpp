@@ -3,11 +3,17 @@
 #include "zioop/network/Serialization.hpp"
 
 namespace network {
-
     nlohmann::json serializeResource(const core::ObservedResource &resource) {
         return {
             {"type", static_cast<int>(resource.type)},
             {"rotting", resource.rotting}
+        };
+    }
+
+    nlohmann::json serializeError(const core::ErrorResult &error) {
+        return {
+            {"agentID", error.base.agentId},
+            {"message", error.message}
         };
     }
 
@@ -46,10 +52,10 @@ namespace network {
                 });
             }
 
-            for (const auto &agent: cell.agents) {
+            for (const auto &[id, level]: cell.agents) {
                 cellJson["agents"].push_back({
-                    {"id", agent.id},
-                    {"level", agent.level}
+                    {"id", id},
+                    {"level", level}
                 });
             }
 
@@ -64,10 +70,16 @@ namespace network {
             {"agentID", move.base.agentId},
             {
                 "position", {
-                    {"x", move.position.x},
-                    {"y", move.position.y}
+                    {"x", move.position->x},
+                    {"y", move.position->y}
                 }
             }
+        };
+    }
+
+    nlohmann::json serializeBroadcast(const core::BroadcastResult &broadcast) {
+        return {
+            {"agentID", broadcast.base.agentId}
         };
     }
 
@@ -108,6 +120,16 @@ namespace network {
             agentJson["subCell"] = agent.subCell;
             agentJson["health"] = agent.health;
             agentJson["level"] = agent.level;
+            agentJson["ritual"] = agent.ritual;
+            if (agent.lookDirection) {
+                agentJson["look"] = {
+                    {"direction", static_cast<std::uint16_t>(*agent.lookDirection)},
+                    {"count", agent.lookCount}
+                };
+            }
+            if (agent.message) {
+                agentJson["message"] = *agent.message;
+            }
 
             auto &inventoryJson = agentJson["inventory"] = nlohmann::json::array();
             for (const auto &item: agent.inventory) {
@@ -136,10 +158,43 @@ namespace network {
         };
     }
 
+    nlohmann::json serializeAttack(const core::AttackResponse &attack) {
+        return {
+            {"agentID", attack.base.agentId},
+            {"targetId", attack.targetId},
+            {"killed", attack.killed}
+        };
+    }
+
     nlohmann::json serializeRitual(const core::RitualResult &ritual) {
         return {
             {"agentID", ritual.base.agentId},
             {"status", static_cast<int>(ritual.result)}
+        };
+    }
+
+    nlohmann::json serializeEvent(const core::Message &event) {
+        return {
+            {"type", "Message"}, // @todo make enum
+            {"speakerId", event.speakerId},
+            {"agentID", event.base.agentId},
+            {"message", event.message},
+            {"direction", event.direction}
+        };
+    }
+
+    nlohmann::json serializeEvent(const core::Died &event) {
+        return {
+            {"type", "Died"},
+            {"agentID", event.base.agentId}
+        };
+    }
+
+    nlohmann::json serializeEvent(const core::RitualCompleted &event) {
+        return {
+            {"type", "Ritual"},
+            {"agentID", event.base.agentId},
+            {"level", event.level}
         };
     }
 }

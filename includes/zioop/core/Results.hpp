@@ -28,6 +28,11 @@ namespace core {
         std::size_t agentId;
     } typedef TakeResult;
 
+    struct ErrorResult {
+        DefaultResult base;
+        std::string message;
+    };
+
     struct ObservedResource {
         ResourceType type;
         int rotting;
@@ -54,6 +59,10 @@ namespace core {
         std::optional<Position> position;
     };
 
+    struct BroadcastResult {
+        DefaultResult base;
+    };
+
     struct HelloResult {
         DefaultResult base;
         Position position;
@@ -71,5 +80,11 @@ namespace core {
     struct RitualResult {
         DefaultResult base;
         RitualStartResult result;
+    };
+
+    struct AttackResponse {
+        DefaultResult base;
+        std::size_t targetId;
+        bool killed;
     };
 }

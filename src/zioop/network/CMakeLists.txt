@@ -12,6 +12,7 @@ set(ZIOOP_NETWORK_SOURCES
         Connection.cpp
         Client.cpp
         Serialization.cpp
+        EventDispatcher.cpp
 )
 
 file(GLOB_RECURSE ZIOOP_NETWORK_HEADERS CONFIGURE_DEPENDS

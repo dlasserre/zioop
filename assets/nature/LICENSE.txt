@@ -1,0 +1,11 @@
+Models by Quaternius (https://quaternius.com), released under CC0 1.0 (public domain).
+
+- Ultimate Nature Pack: https://quaternius.com/packs/ultimatenature.html
+  CommonTree_*, PineTree_*, BirchTree_*, Bush_*, BushBerries_1, Rock_*, Rock_Moss_*,
+  Grass*, Flowers, Plant_*, TreeStump*, WoodLog_Moss
+- Medieval Village Pack: https://quaternius.com/packs/medievalvillage.html
+  Bonfire_Lit, Fence
+- Modular Dungeon Pack: https://quaternius.com/packs/modulardungeon.html
+  Torch
+
+Downloaded as .glb from https://github.com/trebeljahr/quaternius-showcase (public/glb).

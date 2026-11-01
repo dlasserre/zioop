@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <deque>
 #include <unordered_map>
+#include <unordered_set>
 #include <optional>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -63,12 +64,38 @@ namespace ai {
         virtual void take(std::size_t agentId, int type) final;
         virtual void ritual(std::size_t agentId) final;
         virtual void invocation(std::size_t agentId) final;
-        // virtual void attack(int agentId) final;
+        virtual void broadcast(std::size_t agentId, const std::string &message) final;
+        virtual void attack(std::size_t agentId, std::size_t targetId) final;
+
+        [[nodiscard]]
+        virtual bool isOwnAgent(std::size_t agentId) final;
 
         [[nodiscard]]
         virtual std::optional<Decision> getPreviously(std::size_t agentId) final;
 
+        struct Heard {
+            std::optional<std::size_t> speakerId;
+            std::string message;
+            std::optional<core::Direction> direction;
+        };
+
+        [[nodiscard]]
+        virtual std::optional<Heard> takeHeard(std::size_t agentId) final;
+
+        virtual void waitForRitual(std::size_t agentId) final;
+
+        [[nodiscard]]
+        virtual std::optional<std::string> takeRitualEvent(std::size_t agentId) final;
+
     private:
+
+        void listen(const std::string &payload);
+
+        void resumeAfterRitual(std::size_t agentId, const std::string &payload);
+
+        std::unordered_map<std::size_t, Heard> m_heard{};
+        std::unordered_set<std::size_t> m_waiting{};
+        std::unordered_map<std::size_t, std::string> m_ritualEvents{};
 
         struct Incoming {
             std::size_t agentId;

@@ -62,6 +62,14 @@ namespace gui {
             if (entry.contains("ritual")) {
                 agent.ritual = entry.at("ritual").get<bool>();
             }
+            if (const auto look = entry.find("look"); look != entry.end() && look->is_object()) {
+                agent.lookDirection = look->at("direction").get<int>();
+                agent.lookCount = readUnsigned(look->at("count"));
+            }
+            if (const auto message = entry.find("message");
+                message != entry.end() && message->is_string()) {
+                agent.message = message->get<std::string>();
+            }
             // Les anciens snapshots représentent un inventaire vide par null.
             if (const auto inventory = entry.find("inventory");
                 inventory != entry.end() && !inventory->is_null()) {

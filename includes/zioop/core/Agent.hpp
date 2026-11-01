@@ -3,20 +3,22 @@
 #include <chrono>
 #include <optional>
 #include <unordered_map>
-#include <array>
+#include <string>
 
+#include "Event.hpp"
 #include "Inventory.hpp"
 #include "zioop/core/Types.hpp"
-#include "zioop/core/LookResult.hpp"
+#include "zioop/core/Results.hpp"
 
 namespace core {
+    constexpr int FULL_LIFE = 100;
+
     class Cell;
     class Matrix;
 
     class Agent {
     public:
-        //enum class ResourceType { FRUIT, WOOD, STONE };
-        enum LEVEL { BRONZY, SILVER, GOLD };
+        enum LEVEL { BRONZY = 1, SILVER = 2, GOLD = 3 };
 
         Agent();
 
@@ -82,7 +84,49 @@ namespace core {
             return m_health;
         }
 
+        std::vector<Event> update(std::chrono::steady_clock::time_point now);
+
+        void say(std::string message, std::chrono::steady_clock::time_point until);
+
+        [[nodiscard]]
+        std::optional<std::string> getSpeech(std::chrono::steady_clock::time_point now) const;
+
+        void recordLook(Direction direction);
+
+        [[nodiscard]]
+        std::optional<Direction> getLookDirection() const {
+            return m_lookDirection;
+        }
+
+        void setHealth(const int health) {
+            if (health <= 0 || health > 100) {
+                return;
+            }
+            m_health = health;
+        }
+
+        [[nodiscard]]
+        std::size_t getLookCount() const {
+            return m_lookCount;
+        }
+
+        [[nodiscard]]
+        bool isAlive() const {
+            return m_alive;
+        }
+
     private:
+
+        std::optional<Direction> m_lookDirection;
+
+        std::size_t m_lookCount{0};
+
+        struct Speech {
+            std::string message;
+            std::chrono::steady_clock::time_point until;
+        };
+
+        std::optional<Speech> m_speech;
 
         bool consumeRequiredResourcesForLevel();
 
@@ -131,7 +175,7 @@ namespace core {
 
         int m_level{1};
 
-        int m_health{100};
+        int m_health{FULL_LIFE};
 
         std::optional<Ritual> m_ritual;
 

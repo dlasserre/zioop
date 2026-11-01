@@ -73,13 +73,13 @@ test("binary protocol supports fragmented and coalesced UTF-8 frames", () => {
 test("decisions restrict commands, parameters and agent identity", () => {
   const move = parseDecision(decision("MOVE", { direction: "WEST" }));
   assert.deepEqual(gameCommand(move, 12), { type: 1, payload: { agentID: 12, direction: 270 } });
-  assert.deepEqual(gameCommand(parseDecision(decision("TAKE")), 12), { type: 4, payload: { agentID: 12, type: 0 } });
+  assert.deepEqual(gameCommand(parseDecision(decision("TAKE")), 12), { type: 3, payload: { agentID: 12, type: 0 } });
   assert.throws(() => parseDecision(decision("MOVE")), /direction/);
   assert.throws(() => parseDecision(decision("RITUAL", { direction: "NORTH" })), /direction/);
   assert.throws(() => parseDecision(decision("HISTORY", { historyLimit: 21 })), /limit/);
   assert.throws(() => parseDecision(decision("STOP").replace("STOP", "DROP")), /Unsupported/);
   assert.throws(() => parseDecision(JSON.stringify({ ...JSON.parse(decision("TAKE")), agentID: 99 })), /fields/);
-  assert.deepEqual(gameCommand(parseDecision(decision("ATTACK", { target: 7 })), 12), { type: 6, payload: { agentID: 12, targetId: 7 } });
+  assert.deepEqual(gameCommand(parseDecision(decision("ATTACK", { target: 7 })), 12), { type: 5, payload: { agentID: 12, targetId: 7 } });
   assert.throws(() => parseDecision(decision("ATTACK")), /target/);
   assert.throws(() => parseDecision(decision("ATTACK", { target: 0 })), /target/);
   assert.throws(() => parseDecision(decision("ATTACK", { target: 7, direction: "NORTH" })), /direction/);

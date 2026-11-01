@@ -48,10 +48,10 @@ namespace {
 int main(int argc, char *argv[]) {
     registerSignalHandlers();
 
-    if (argc < 3) {
-        std::cerr << "Usage " << argv[0] << "<width> <height>\n";
-        return EXIT_FAILURE;
-    }
+   //  if (argc < 3) {
+   //      std::cerr << "Usage " << argv[0] << "<width> <height>\n";
+   //      return EXIT_FAILURE;
+   //  }
     try {
         int width = std::stoi(argv[1]);
         int height = std::stoi(argv[2]);
@@ -59,7 +59,7 @@ int main(int argc, char *argv[]) {
         network::Server server(
             "127.0.0.1",
             9090,
-            core::Matrix(width, height)
+            core::Matrix(10, 10)
         );
 
         std::thread serverThread([&server] {
@@ -70,8 +70,6 @@ int main(int argc, char *argv[]) {
         while (!stopRequested) {
             const auto nextTick =
                     std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
-
-            server.processDisconnections();
             server.tick();
 
             std::this_thread::sleep_until(nextTick);

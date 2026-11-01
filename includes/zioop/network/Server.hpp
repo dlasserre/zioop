@@ -10,6 +10,7 @@
 
 #include <winsock2.h>
 
+#include "EventDispatcher.hpp"
 #include "zioop/core/Game.hpp"
 #include "zioop/network/Connection.hpp"
 #include "zioop/network/Protocol.hpp"
@@ -33,8 +34,6 @@ namespace network {
 
         Server &operator=(Server &&) = delete;
 
-        void processDisconnections();
-
         void Start();
 
         void stop();
@@ -46,6 +45,8 @@ namespace network {
             Connection &,
             const Protocol::Message &
         );
+
+        void processDisconnections();
 
         void handleFrame(
             Connection &connection,
@@ -75,7 +76,7 @@ namespace network {
         void getMatrix(
             Connection &connection,
             const Protocol::Message &message
-        ) const;
+        );
 
         void lookingAt(
             Connection &connection,
@@ -128,5 +129,7 @@ namespace network {
 
         std::size_t m_nextClientId{0};
         std::vector<std::shared_ptr<Connection> > m_connections;
+
+        EventDispatcher m_dispatcher;
     };
 }

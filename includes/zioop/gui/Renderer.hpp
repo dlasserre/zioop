@@ -6,8 +6,14 @@
 
 #include "MatrixConnection.hpp"
 #include "Terrain.hpp"
+#include "DayCycle.hpp"
+#include "Lighting.hpp"
+#include "Typography.hpp"
 
+#include <deque>
 #include <future>
+#include <memory>
+#include <string>
 #include <vector>
 
 namespace zioop {
@@ -69,6 +75,12 @@ namespace gui {
 
             std::size_t level{0};
             bool ritual{false};
+            float ritualTime{0.0f};
+            float burst{0.0f};
+
+            std::size_t lookCount{0};
+            float lookTime{-1.0f};
+            Vector3 lookDirection{0.0f, 0.0f, -1.0f};
         };
 
         // Agent tué : il joue Death une fois, puis reste au sol.
@@ -100,15 +112,61 @@ namespace gui {
     private:
         void updateMatrix(bool& hasSnapshot, Clock::time_point& nextReques);
 
-        void DrawAgents();
+        void DrawAgents() const;
 
         void DrawAgentInformation() const;
 
-        void DrawResources();
+        void DrawEnvironmentInformation() const;
 
-        void DrawGround();
+        void collectAgentLights(std::vector<PointLight> &lights, float night) const;
+
+        void renderScene(float deltaTime);
+
+        void DrawRitualEffects() const;
+
+        void DrawLookBeams() const;
+
+        void DrawLevelAuras() const;
+
+        void updateCamera(float deltaTime);
+
+        std::string m_moveKeys{"WASD"};
+
+        [[nodiscard]] Vector3 eyePosition(const AgentMotion &motion) const;
+
+        Texture2D m_glow{};
+
+        void DrawSpeechBubble(const std::string &message, Vector2 tip, Color border) const;
+
+        float DrawKeyHint(const std::string &key, const std::string &label, Vector2 position) const;
+
+        Typography m_typography{};
+
+        struct ChatEntry {
+            std::size_t agentId{};
+            std::size_t x{};
+            std::size_t y{};
+            std::string time{};
+            std::string message{};
+        };
+
+        void recordMessages(const MatrixConnection::MatrixSnapshot &snapshot);
+
+        void DrawChat() const;
+
+        std::deque<ChatEntry> m_chat{};
+
+        bool m_showChat{true};
+
+        void DrawResources() const;
 
         int m_width{1}, m_height{1};
+
+        std::unique_ptr<Lighting> m_lighting;
+
+        DayCycle m_dayCycle{};
+
+        float m_elapsed{0.0f};
         std::string m_title{};
 
         Camera3D m_camera{
@@ -128,6 +186,7 @@ namespace gui {
             ModelRender resource;
             float scale{0.3f};
             float zOffset{.095f};
+            float minY{0.0f};
         };
 
         ModelRender m_agentModel{};

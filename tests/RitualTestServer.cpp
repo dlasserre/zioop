@@ -10,9 +10,10 @@ int main(const int argc, char *argv[]) {
     if (argc != 2) {
         return 1;
     }
-
     network::Server server(
-        "127.0.0.1", static_cast<std::uint16_t>(std::stoi(argv[1])), core::Matrix(12, 12)
+        "127.0.0.1",
+        static_cast<std::uint16_t>(std::stoi(argv[1])),
+        core::Matrix(12, 12)
     );
     std::atomic_bool stopRequested{false};
     std::thread listener([&server] { server.Start(); });
