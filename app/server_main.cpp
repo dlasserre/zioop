@@ -45,21 +45,23 @@ namespace {
 #endif
 }
 
-int main(int argc, char *argv[]) {
+int main(const int argc, char *argv[]) {
     registerSignalHandlers();
 
-   //  if (argc < 3) {
-   //      std::cerr << "Usage " << argv[0] << "<width> <height>\n";
-   //      return EXIT_FAILURE;
-   //  }
     try {
-        int width = std::stoi(argv[1]);
-        int height = std::stoi(argv[2]);
+
+        //@todo clean with real arguments manager.
+        const std::string host  = argc > 1 ? argv[1] : "127.0.0.1";
+        const std::uint16_t port= argc > 2 ? static_cast<std::uint16_t>(std::stoi(argv[2])) : 9090;
+        const int width         = argc > 3 ? std::stoi(argv[3]) : 10;
+        const int height        = argc > 4 ? std::stoi(argv[4]) : 10;
+
+        std::cout << std::format("Started on {}:{} size({}, {}) \n", host, port, width, height);
 
         network::Server server(
-            "127.0.0.1",
-            9090,
-            core::Matrix(10, 10)
+            host,
+            port,
+            core::Matrix(width,height)
         );
 
         std::thread serverThread([&server] {
@@ -74,7 +76,7 @@ int main(int argc, char *argv[]) {
 
             std::this_thread::sleep_until(nextTick);
         }
-        std::cout << "Server stopped\n";
+        std::cout << "Server stopped" << std::endl;
         server.stop();
 
         serverThread.join();

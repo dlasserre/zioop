@@ -10,36 +10,39 @@ namespace core {
     static std::mt19937 generator(std::random_device{}());
 
     constexpr std::array types{
-        ResourceType::APPLE
+        ResourceType::APPLE,
+        ResourceType::CAKE,
+        ResourceType::MAGIC_WATER,
+        ResourceType::MEAT
     };
 
     Matrix::Matrix(
-    const std::size_t sizeX,
-    const std::size_t sizeY
-)
-    : m_sizeX(sizeX),
-      m_sizeY(sizeY),
-      angles{
-        {
-            {0, 0},
-            {sizeX - 1, 0},
-            {0, sizeY - 1},
-            {sizeX - 1, sizeY - 1}
-        }
-      } {
+        const std::size_t sizeX,
+        const std::size_t sizeY
+    )
+        : m_sizeX(sizeX),
+          m_sizeY(sizeY),
+          angles{
+              {
+                  {.x = 0, .y = 0},
+                  {.x = sizeX - 1, .y = 0},
+                  {.x = 0, .y = sizeY - 1},
+                  {.x = sizeX - 1, .y = sizeY - 1}
+              }
+          } {
         if (sizeX == 0 || sizeY == 0) {
             throw std::invalid_argument(
                 "Matrix dimensions must be greater than 0"
             );
         }
 
-        std::uniform_int_distribution<int> quantity(0, 3);
+        std::uniform_int_distribution quantity(0, 3);
         std::uniform_int_distribution<std::size_t> chooseType(0, types.size() - 1);
 
         m_cells.reserve(m_sizeX);
 
         for (std::size_t x = 0; x < m_sizeX; ++x) {
-            std::vector<std::unique_ptr<Cell>> row;
+            std::vector<std::unique_ptr<Cell> > row;
             row.reserve(m_sizeY);
 
             for (std::size_t y = 0; y < m_sizeY; ++y) {
@@ -70,7 +73,6 @@ namespace core {
         }
     }
 
-
     bool Matrix::caseIsFull(
         const Position &position
     ) const {
@@ -86,7 +88,7 @@ namespace core {
         return !m_cells[position.x][position.y]->empty();
     }
 
-    const Cell* Matrix::getCell(const Position &position) const {
+    const Cell *Matrix::getCell(const Position &position) const {
         if (position.x >= m_sizeX || position.y >= m_sizeY) {
             return nullptr;
         }
@@ -95,9 +97,9 @@ namespace core {
     }
 
     std::optional<Position> Matrix::offsetMatrix(
-            Position origin,
-            const Offset offset
-        ) const {
+        Position origin,
+        const Offset offset
+    ) const {
         const auto x = static_cast<std::ptrdiff_t>(origin.x) + offset.x;
         const auto y = static_cast<std::ptrdiff_t>(origin.y) + offset.y;
 
@@ -116,8 +118,8 @@ namespace core {
 
 
     std::optional<Position> Matrix::getNeighborPosition(
-        Position target,
-        Direction direction
+        const Position target,
+        const Direction direction
     ) const {
         if (m_sizeX == 0 || m_sizeY == 0 ||
             target.x >= m_sizeX || target.y >= m_sizeY) {
@@ -206,7 +208,6 @@ namespace core {
 
         Cell &destination = *m_cells[target->x][target->y];
 
-        // Dans le cadre d'une matrice d'une seule case ???
         if (&destination == cell) {
             return target;
         }
@@ -232,21 +233,30 @@ namespace core {
     }
 
     Cell *Matrix::getFreeCell() const {
-        for (const auto &x: m_cells) {
-            for (const auto &y: x) {
-                if (!y->isFull()) {
-                    return y.get();
+        Cell *selected = nullptr;
+        int freeCount = 0;
+        std::random_device rd;
+        std::mt19937 gen(rd());
+
+        for (const auto &row: m_cells) {
+            for (const auto &cell: row) {
+                if (!cell->isFull()) {
+                    ++freeCount;
+                    std::uniform_int_distribution distrib(1, freeCount);
+                    if (distrib(gen) == 1) {
+                        selected = cell.get();
+                    }
                 }
             }
         }
 
-        return nullptr;
+        return selected;
     }
 
-    void Matrix::removeAgent(Agent &agent) {
+    void Matrix::removeAgent(Agent &agent) const {
         if (const Cell *cell = agent.getCell()) {
-            Position cellPosition = cell->getPosition();
-            Cell &source = *m_cells[cellPosition.x][cellPosition.y];
+            const auto &[x, y] = cell->getPosition();
+            Cell &source = *m_cells[x][y];
             source.remove(agent);
         }
         agent.setCell(nullptr);

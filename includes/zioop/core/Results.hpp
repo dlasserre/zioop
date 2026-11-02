@@ -33,6 +33,12 @@ namespace core {
         std::string message;
     };
 
+    struct InvocationResult {
+        DefaultResult base;
+        std::size_t spawnedAgentId;
+        std::optional<Position> position;
+    };
+
     struct ObservedResource {
         ResourceType type;
         int rotting;

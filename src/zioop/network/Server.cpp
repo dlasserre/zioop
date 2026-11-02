@@ -321,19 +321,16 @@ namespace network {
 
         try {
             const auto placement =
-                    m_game.createAgent(connection.getClientId());
+                m_game.createAgent(connection.getClientId(), agentID);
 
             if (!placement) {
-                error(connection, agentID, "Cannot spawn new agent");
+                error(connection, agentID, "Cannot spawn new agent, matrix is probably full");
                 return;
             }
 
             connection.send(Protocol::encode(
                 Protocol::ResponseType::OK,
-                serializePosition({
-                    .base = {.agentId = agentID},
-                    .position = placement->position
-                }).dump()
+                serializeInvocation(*placement).dump()
             ));
         } catch (const nlohmann::json::exception &e) {
             error(connection, agentID, std::format("An error occurred: {}", e.what()));

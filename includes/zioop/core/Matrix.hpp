@@ -37,7 +37,7 @@ namespace core {
 
         std::optional<Position> addAgent(Agent &agent) const;
 
-        void removeAgent(Agent &agent);
+        void removeAgent(Agent &agent) const;
 
         void updateResources() const;
 

@@ -33,6 +33,14 @@ namespace network {
         };
     }
 
+    nlohmann::json serializeInvocation(const core::InvocationResult &invocation) {
+        return {
+            {"agentId", invocation.base.agentId},
+            {"spawnedAgentId", invocation.spawnedAgentId},
+            {"position", {invocation.position->x, invocation.position->y}}
+        };
+    }
+
     nlohmann::json serializeLook(const core::LookResult &observation) {
         nlohmann::json payload = {
             {"cells", nlohmann::json::array()},

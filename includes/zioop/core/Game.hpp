@@ -40,8 +40,9 @@ namespace core {
             std::size_t clientId
         );
 
-        std::optional<InitPlacement> createAgent(
-            std::size_t clientId
+        std::optional<InvocationResult> createAgent(
+            std::size_t clientId,
+            std::size_t agentId
         );
 
         [[nodiscard]]

@@ -19,6 +19,10 @@ namespace {
     constexpr std::uint64_t MemoryLifetime = 80;
     constexpr std::uint64_t ShoutCooldown = 25;
     constexpr int ExplorationRadius = 6;
+    constexpr std::size_t MaxTeamSize = 4;
+    constexpr std::uint64_t InvocationWarmup = 5;
+    constexpr std::uint64_t InvocationCooldown = 30;
+    constexpr std::uint64_t InvocationBackoff = 60;
 
     constexpr std::array<const char *, 4> ResourceNames{"une pomme", "un gâteau", "de la viande", "de l'eau magique"};
 
@@ -285,6 +289,9 @@ void Claude::remember(Memory &memory, const Decision &previous, const bool ok, c
         case MessageType::ATTACK:
             rememberAttack(memory, previous, ok, payload);
             break;
+        case MessageType::INVOCATION:
+            rememberInvocation(memory, previous, ok, payload);
+            break;
         case MessageType::RITUAL:
             if (!ok) {
                 memory.ritualBackoff = 6;
@@ -380,6 +387,32 @@ void Claude::rememberAttack(Memory &memory, const Decision &previous, const bool
         memory.enemies.erase(target);
     } else if (reason.find("Ritual") == std::string::npos) {
         memory.enemies.erase(target);
+    }
+}
+
+bool Claude::wantsReinforcement(const Memory &memory) const {
+    return memory.clock > InvocationWarmup &&
+           memory.clock >= memory.nextInvocation &&
+           m_memory.size() + m_pendingInvocations < MaxTeamSize;
+}
+
+void Claude::rememberInvocation(Memory &memory, const Decision &previous, const bool ok, const nlohmann::json &payload) {
+    const auto self = previous.parameters.value("agentID", std::size_t{0});
+
+    if (m_pendingInvocations > 0) {
+        --m_pendingInvocations;
+    }
+
+    if (!ok) {
+        memory.nextInvocation = memory.clock + InvocationBackoff;
+        std::cerr << "[" << self << "] Invocation refusee : " << payload.value("message", std::string{}) << std::endl;
+        return;
+    }
+
+    memory.nextInvocation = memory.clock + InvocationCooldown;
+    const auto spawned = payload.value("spawnedAgentId", std::size_t{0});
+    if (spawned != 0) {
+        memory.pendingShout = std::format("Renfort #{} invoque", spawned);
     }
 }
 
@@ -543,6 +576,14 @@ void Claude::decide(
     if (const auto target = enemyToStrike(memory)) {
         memory.plannedMove.reset();
         attack(agentId, *target);
+        return;
+    }
+
+    if (wantsReinforcement(memory)) {
+        ++m_pendingInvocations;
+        std::cout << "[" << agentId << "] J'invoque un renfort (equipe " << m_memory.size() << "/" << MaxTeamSize
+                  << ")." << std::endl;
+        invocation(agentId);
         return;
     }
 

@@ -29,6 +29,7 @@ namespace core {
     constexpr int DAMAGE = 2;
     constexpr int BroadCastRange = 3;
     constexpr auto SpeechDuration = std::chrono::seconds(4);
+    constexpr int MAX_MONSTERS = 5;
 
     Game::Game(Matrix matrix)
         : m_matrix(std::move(matrix)) {
@@ -212,13 +213,23 @@ namespace core {
         };
     }
 
-    std::optional<Game::InitPlacement> Game::createAgent(const std::size_t clientId) {
-        std::scoped_lock lock(m_stateMutex);
-
-        if (!m_agents.contains(clientId)) {
-            return std::nullopt;
-        }
-        return placeAgent(clientId);
+    std::optional<InvocationResult> Game::createAgent(
+        const std::size_t clientId,
+        const std::size_t agentId
+    ){
+        // Add check resource to instanciat a new agent.
+        // Need table resources
+        return withAgent(clientId, agentId, [&](const Agent &agent) -> std::optional<InvocationResult> {
+            const auto newAgent = placeAgent(clientId);
+            if (!newAgent) {
+                return std::nullopt; // Matrix is full
+            }
+            return InvocationResult{
+                .base = { .agentId = agent.getId() },
+                .spawnedAgentId = newAgent->agentId,
+                .position = newAgent->position
+            };
+        }).value_or(std::nullopt);
     }
 
     std::optional<Game::InitPlacement> Game::initClient(const std::size_t clientId) {

@@ -363,13 +363,22 @@ namespace ai {
             response.payload, nullptr, false
         );
 
-        std::optional<std::size_t> payloadAgent;
-        if (payload.is_object()) {
-            const auto field = payload.find("agentID");
-            if (field != payload.end() && field->is_number_unsigned()) {
-                payloadAgent = field->get<std::size_t>();
+        const auto readId = [&payload](const char *key) -> std::optional<std::size_t> {
+            if (!payload.is_object()) {
+                return std::nullopt;
             }
+            const auto field = payload.find(key);
+            if (field == payload.end() || !field->is_number_unsigned()) {
+                return std::nullopt;
+            }
+            return field->get<std::size_t>();
+        };
+
+        auto payloadAgent = readId("agentID");
+        if (!payloadAgent) {
+            payloadAgent = readId("agentId");
         }
+        const auto spawnedAgent = readId("spawnedAgentId");
 
         std::size_t agentId = 0;
         std::optional<std::size_t> spawned;
@@ -389,13 +398,6 @@ namespace ai {
                 pending = std::find(
                     m_pending.begin(), m_pending.end(), *payloadAgent
                 );
-                if (
-                    pending == m_pending.end() &&
-                    !m_pending.empty() &&
-                    lastCommand(m_pending.front()) == MessageType::INVOCATION
-                ) {
-                    pending = m_pending.begin();
-                }
             } else if (!m_pending.empty()) {
                 pending = m_pending.begin();
             }
@@ -411,14 +413,16 @@ namespace ai {
             }
 
             if (
-                payloadAgent &&
-                *payloadAgent != agentId &&
+                spawnedAgent &&
                 response.header.type == network::Protocol::ResponseType::OK &&
                 lastCommand(agentId) == MessageType::INVOCATION &&
-                !m_history.contains(*payloadAgent)
+                !m_history.contains(*spawnedAgent)
             ) {
-                m_history.try_emplace(*payloadAgent);
-                spawned = payloadAgent;
+                m_history.try_emplace(*spawnedAgent);
+                spawned = spawnedAgent;
+                std::cout
+                    << "[" << agentId << "] Invoked agent "
+                    << *spawnedAgent << std::endl;
             }
         }
 

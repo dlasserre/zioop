@@ -65,6 +65,7 @@ namespace ai {
             bool inRitual{false};
             std::size_t ritualLooks{0};
             std::optional<std::string> pendingShout;
+            std::uint64_t nextInvocation{0};
         };
 
         void remember(Memory &memory, const Decision &previous, bool ok, const nlohmann::json &payload);
@@ -97,7 +98,12 @@ namespace ai {
 
         [[nodiscard]] std::optional<core::Direction> stepToward(const Memory &memory, const Point &target) const;
 
+        [[nodiscard]] bool wantsReinforcement(const Memory &memory) const;
+
+        void rememberInvocation(Memory &memory, const Decision &previous, bool ok, const nlohmann::json &payload);
+
         std::unordered_map<std::size_t, Memory> m_memory;
+        std::size_t m_pendingInvocations{0};
     };
 
 }

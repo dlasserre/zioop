@@ -39,6 +39,9 @@ namespace network {
     [[nodiscard]]
     nlohmann::json serializeError(const core::ErrorResult &error);
 
+    [[nodiscard]]
+    nlohmann::json serializeInvocation(const core::InvocationResult &invocation);
+
 
     // Overload events
     [[nodiscard]]
