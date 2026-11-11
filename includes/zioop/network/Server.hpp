@@ -1,5 +1,10 @@
 #pragma once
 
+#include "EventDispatcher.hpp"
+#include "zioop/core/Game.hpp"
+#include "zioop/network/Connection.hpp"
+#include "zioop/network/Protocol.hpp"
+
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -7,15 +12,16 @@
 #include <string>
 #include <vector>
 #include <queue>
-
 #include <winsock2.h>
 
-#include "EventDispatcher.hpp"
-#include "zioop/core/Game.hpp"
-#include "zioop/network/Connection.hpp"
-#include "zioop/network/Protocol.hpp"
-
 namespace network {
+
+    struct Request {
+        core::AgentId agentId;
+        core::ClientId clientId;
+        nlohmann::json body;
+    };
+
     class Server {
     public:
         Server(
@@ -43,7 +49,7 @@ namespace network {
     private:
         using Handler = void (Server::*)(
             Connection &,
-            const Protocol::Message &
+            const Request &
         );
 
         void processDisconnections();
@@ -60,58 +66,67 @@ namespace network {
 
         void broadcast(
             Connection &connection,
-            const Protocol::Message &message
+            const Request &request
         );
 
         void hello(
             Connection &connection,
-            const Protocol::Message &message
+            const Request &request
         );
 
         void move(
             Connection &connection,
-            const Protocol::Message &message
+            const Request &request
         );
 
         void getMatrix(
             Connection &connection,
-            const Protocol::Message &message
+            const Request &request
         );
 
         void lookingAt(
             Connection &connection,
-            const Protocol::Message &message
+            const Request &request
         );
 
         void take(
             Connection &connection,
-            const Protocol::Message &message
+            const Request &request
+        );
+
+        void give(
+            Connection &connection,
+            const Request &request
         );
 
         void disconnect(
             Connection &connection,
-            const Protocol::Message &message
+            const Request &message
         );
-
 
         void inventory(
             Connection &connection,
-            const Protocol::Message &message
+            const Request &request
         );
 
         void ritual(
             Connection &connection,
-            const Protocol::Message &message
+            const Request &request
         );
 
         void attack(
             Connection &connection,
-            const Protocol::Message &message
+            const Request &request
         );
 
         void invocation(
             Connection &connection,
-            const Protocol::Message &message
+            const Request &request
+        );
+
+        void heal(
+            Connection &connection,
+            const Request &request
         );
 
         std::mutex m_stateMutex;

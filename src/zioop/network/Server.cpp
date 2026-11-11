@@ -1,4 +1,7 @@
 #include "zioop/network/Server.hpp"
+#include "zioop/network/Connection.hpp"
+#include "zioop/network/Protocol.hpp"
+#include "zioop/network/Serialization.hpp"
 
 #include <iostream>
 #include <stdexcept>
@@ -8,11 +11,6 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <nlohmann/json.hpp>
-
-#include "zioop/network/Connection.hpp"
-#include "zioop/network/Protocol.hpp"
-#include "zioop/network/Serialization.hpp"
-
 
 namespace network {
     namespace {
@@ -48,7 +46,7 @@ namespace network {
 
         void error(
             const Connection &connection,
-            const std::size_t &agentId,
+            const core::AgentId &agentId,
             const std::string &message
         ) {
             connection.send(Protocol::encode(
@@ -68,7 +66,7 @@ namespace network {
     ) : m_game(std::move(matrix)),
         m_address(std::move(address)),
         m_port(port),
-        m_dispatcher([this](std::size_t clientId, const std::vector<std::byte> &frame) {
+        m_dispatcher([this](core::ClientId clientId, const std::vector<std::byte> &frame) {
             std::shared_ptr<Connection> connection;
             {
                 std::lock_guard lock(m_stateMutex);
@@ -139,14 +137,13 @@ namespace network {
 
     void Server::hello(
         Connection &connection,
-        const Protocol::Message & /* message */
+        const Request &request
     ) {
-        const auto placement = m_game.initClient(
-            connection.getClientId()
-        );
+        const core::ClientId& clientId = request.clientId;
+        const auto placement = m_game.initClient(clientId);
 
         if (!placement) {
-            error(connection, 0, "Unable to create agent");
+            error(connection, core::AgentId{0}, "Unable to create agent");
             return;
         }
 
@@ -161,62 +158,61 @@ namespace network {
 
     void Server::move(
         Connection &connection,
-        const Protocol::Message &message
+        const Request &request
     ) {
         try {
-            const auto data = message.getData();
-
-            const auto agentID =
-                    data.at("agentID").get<std::size_t>();
-
+            const core::AgentId& agentId = request.agentId;
+            const core::ClientId& clientId = request.clientId;
             const auto direction = static_cast<core::Direction>(
-                data.at("direction").get<std::uint16_t>()
+                request.body.at("direction").get<std::uint16_t>()
             );
 
             const auto target = m_game.move(
-                connection.getClientId(), agentID, direction
+                clientId, agentId, direction
             );
 
             if (!target || !target->position) {
-                error(connection, agentID, "Unable to move agent");
+                error(connection, agentId, "Unable to move agent");
                 return;
             }
 
             connection.send(Protocol::encode(
                 Protocol::ResponseType::OK,
                 serializePosition({
-                    .base = {.agentId = agentID},
+                    .base = {.agentId = agentId},
                     .position = *target->position
                 }).dump()
             ));
         } catch (const nlohmann::json::exception &) {
-            error(connection, 0, "Invalid payload");
+            error(connection, core::AgentId{0}, "Invalid payload");
         }
     }
 
     void Server::lookingAt(
         Connection &connection,
-        const Protocol::Message &message
+        const Request &request
     ) {
-        const auto data = message.getData();
-
-        const auto agentID =
-                data.at("agentID").get<std::size_t>();
-
         try {
+            const core::AgentId& agentId = request.agentId;
+            const core::ClientId& clientId = request.clientId;
+
             const auto direction = static_cast<core::Direction>(
-                data.at("direction").get<std::uint16_t>()
+                request.body.at("direction").get<std::uint16_t>()
             );
 
             auto observation = m_game.look(
-                connection.getClientId(), agentID, direction
+                clientId, agentId, direction
             );
 
             if (!observation) {
-                error(connection, agentID, std::format("Agent {} or cell not found", agentID));
+                error(
+                    connection,
+                    agentId,
+                    std::format("Agent {} or cell not found", static_cast<std::size_t>(agentId))
+                );
                 return;
             }
-            observation->base.agentId = agentID;
+            observation->base.agentId = agentId;
             const auto payload = serializeLook(*observation);
 
             connection.send(Protocol::encode(
@@ -224,40 +220,35 @@ namespace network {
                 payload.dump()
             ));
         } catch (const nlohmann::json::exception &) {
-            error(connection, 0, "An error occurred");
+            error(connection, core::AgentId{0}, "An error occurred");
         }
     }
 
     void Server::take(
         Connection &connection,
-        const Protocol::Message &message
+        const Request &request
     ) {
-        const auto data = message.getData();
-
-        const auto agentID =
-                data.at("agentID").get<std::size_t>();
-
         try {
-            const auto type = parseResourceType(
-                data.at("type").get<int>()
-            );
+            const core::AgentId& agentId = request.agentId;
+            const core::ClientId& clientId = request.clientId;
+            const auto type = parseResourceType(request.body.at("type").get<int>());
 
             if (!type) {
-                error(connection, agentID, "Type not found");
+                error(connection, agentId, "Type not found");
                 return;
             }
 
             const auto result = m_game.take(
-                connection.getClientId(),
-                agentID,
+                clientId,
+                agentId,
                 *type
             );
 
             if (!result) {
                 error(
                     connection,
-                    agentID,
-                    std::format("Client({}) not found", connection.getClientId())
+                    agentId,
+                    std::format("Client({}) not found", static_cast<std::size_t>(clientId))
                 );
                 return;
             }
@@ -265,7 +256,7 @@ namespace network {
             if (!result->taken) {
                 error(
                     connection,
-                    agentID,
+                    agentId,
                     "Unable to take resource (missing resource or ritual  in progress)"
                 );
                 return;
@@ -275,56 +266,109 @@ namespace network {
                 Protocol::encode(
                     Protocol::ResponseType::OK,
                     serializeInventory(core::InventoryResult{
-                        .base = {.agentId = agentID},
+                        .base = { .agentId = agentId },
                         .inventory = result->inventory,
                     }).dump()
                 )
             );
         } catch (const nlohmann::json::exception &) {
-            error(connection, 0, "An error occurred");
+            error(connection, core::AgentId{0}, "An error occurred");
+        }
+    }
+
+    void Server::give(
+        Connection &connection,
+        const Request &request
+    ) {
+        try {
+            const core::AgentId& agentId = request.agentId;
+            const auto targetID = request.body.at("targetID").get<core::AgentId>();
+            const auto resourceType = parseResourceType(request.body.at("type").get<int>());
+
+            if (!resourceType) {
+                error(connection, agentId, "Type not found");
+                return;
+            }
+
+            const auto result = m_game.give(
+                connection.getClientId(),
+                agentId,
+                *resourceType,
+                targetID
+            );
+
+            if (!result || *result != core::GiveResult::GIVED) {
+                error(connection, agentId, std::format("Give {} failed", static_cast<std::size_t>(agentId)));
+                return;
+            }
+
+            connection.send(
+                Protocol::encode(
+                    Protocol::ResponseType::OK,
+                    serializeGive({
+                        .base = { .agentId = agentId },
+                        .resource = *resourceType,
+                        .targetAgentId = targetID
+                    }).dump()
+                )
+            );
+        } catch (const nlohmann::json::exception &e) {
+            error(connection, core::AgentId{0}, e.what());
         }
     }
 
     void Server::inventory(
         Connection &connection,
-        const Protocol::Message &message
+        const Request &request
     ) {
-        // @todo deport code into inline function.
-        const auto data = message.getData();
+        try {
+            const core::AgentId& agentId = request.agentId;
 
-        const auto agentID =
-                data.at("agentID").get<std::size_t>();
+            const auto inventory = m_game.inventory(
+                connection.getClientId(),
+                agentId
+            );
 
-        const auto inventory = m_game.inventory(
-            connection.getClientId(),
-            agentID
-        );
+            if (!inventory) {
+                error(connection, agentId, "Inventory not found");
+                return;
+            }
 
-        if (!inventory) {
-            error(connection, agentID, "Inventory not found");
-            return;
+            connection.send(Protocol::encode(
+                Protocol::ResponseType::OK,
+                serializeInventory(*inventory).dump()
+            ));
+        } catch (const nlohmann::json::exception &e) {
+            error(connection, core::AgentId{0}, e.what());
         }
+    }
 
-        connection.send(Protocol::encode(
-            Protocol::ResponseType::OK,
-            serializeInventory(*inventory).dump()
-        ));
+    void Server::heal(
+        Connection &connection,
+        const Request &request
+    ) {
+       try {
+
+       } catch (nlohmann::json::exception &e) {
+           error(connection, core::AgentId{0}, std::format("An error occurred: {}", e.what()));
+       }
     }
 
     void Server::invocation(
         Connection &connection,
-        const Protocol::Message &message
+        const Request &request
     ) {
-        const auto data = message.getData();
-        const auto agentID =
-                data.at("agentID").get<std::size_t>();
-
         try {
+            const core::AgentId& agentId = request.agentId;
             const auto placement =
-                m_game.createAgent(connection.getClientId(), agentID);
+                m_game.instanciatAgent(connection.getClientId(), agentId);
 
-            if (!placement) {
-                error(connection, agentID, "Cannot spawn new agent, matrix is probably full");
+            if (!placement || !placement.has_value()) {
+                error(
+                    connection,
+                    agentId,
+                    "Cant spawn new agent, matrix is probably full or not enough resources"
+                );
                 return;
             }
 
@@ -333,18 +377,17 @@ namespace network {
                 serializeInvocation(*placement).dump()
             ));
         } catch (const nlohmann::json::exception &e) {
-            error(connection, agentID, std::format("An error occurred: {}", e.what()));
+            error(connection, core::AgentId{0}, std::format("An error occurred: {}", e.what()));
         }
     }
 
     void Server::attack(
         Connection &connection,
-        const Protocol::Message &message
+        const Request &request
     ) {
         try {
-            const auto data = message.getData();
-            const auto agentId = data.at("agentID").get<std::size_t>();
-            const auto targetId = data.at("targetId").get<std::size_t>();
+            const core::AgentId& agentId = request.agentId;
+            const auto targetId = request.body.at("targetId").get<core::AgentId>();
 
             const auto result = m_game.attack(
                 connection.getClientId(),
@@ -396,18 +439,17 @@ namespace network {
                     error(connection, agentId, "Target is too strong for you");
             }
         } catch (const nlohmann::json::exception &e) {
-            error(connection, 0, e.what());
+            error(connection, core::AgentId{0}, e.what());
         }
     }
 
     void Server::broadcast(
         Connection &connection,
-        const Protocol::Message &message
+        const Request &request
     ) {
         try {
-            const auto data = message.getData();
-            const auto agentId = data.at("agentID").get<std::size_t>();
-            auto _message = data.at("message").get<std::string>();
+            const core::AgentId& agentId = request.agentId;
+            auto _message = request.body.at("message").get<std::string>();
 
             if (_message.empty()) {
                 error(connection, agentId, "Message is empty");
@@ -422,7 +464,7 @@ namespace network {
             const auto result = m_game.broadcast(
                 connection.getClientId(),
                 agentId,
-                std::move(_message)
+                _message
             );
 
             if (!result) {
@@ -437,18 +479,19 @@ namespace network {
                 )
             );
         } catch (const nlohmann::json::exception &e) {
-            error(connection, 0, e.what());
+            error(connection, core::AgentId{0}, e.what());
         }
     }
 
     void Server::ritual(
         Connection &connection,
-        const Protocol::Message &message
+        const Request &request
     ) {
         try {
-            const auto data = message.getData();
-            const auto agentId = data.at("agentID").get<std::size_t>();
-            const auto result = m_game.ritual(connection.getClientId(), agentId);
+            const core::AgentId& agentId = request.agentId;
+            const core::ClientId& clientId = request.clientId;
+
+            const auto result = m_game.ritual(clientId, agentId);
             if (!result) {
                 error(connection, agentId, "Agent not found or not owned by client");
                 return;
@@ -469,13 +512,13 @@ namespace network {
                     error(connection, agentId, "Not enough resources for ritual");
             }
         } catch (const nlohmann::json::exception &e) {
-            error(connection, 0, e.what());
+            error(connection, core::AgentId{0}, e.what());
         }
     }
 
     void Server::getMatrix(
         Connection &connection,
-        const Protocol::Message &
+        const Request &
     ) {
         const auto payload = serializeMatrix({
             .snapshot = m_game.getMatrix()
@@ -555,7 +598,7 @@ namespace network {
                 port,
                 lambda,
                 onDisconnect,
-                m_nextClientId++
+                core::ClientId{m_nextClientId++}
             );
 
             std::cout << std::format("New client connected ip={} on port={}\n", ip, port);
@@ -609,7 +652,9 @@ namespace network {
             {Type::RITUAL, &Server::ritual},
             {Type::ATTACK, &Server::attack},
             {Type::INVOCATION, &Server::invocation},
-            {Type::BROADCAST, &Server::broadcast}
+            {Type::BROADCAST, &Server::broadcast},
+            {Type::GIVE, &Server::give},
+            {Type::HEAL, &Server::heal}
         };
 
         const auto it = handlers.find(message.header.type);
@@ -624,12 +669,19 @@ namespace network {
 
         const Handler method = it->second;
 
-        (this->*method)(connection, message);
+        const auto data = message.getData();
+        const Request request{
+            .agentId = data.at("agentID").get<core::AgentId>(),
+            .clientId = connection.getClientId(),
+            .body = data
+        };
+
+        (this->*method)(connection, request);
     }
 
     void Server::disconnect(
         Connection &connection,
-        const Protocol::Message &
+        const Request &
     ) {
         connection.requestStop();
     }

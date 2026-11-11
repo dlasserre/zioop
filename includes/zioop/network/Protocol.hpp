@@ -8,6 +8,10 @@
 #include <vector>
 
 namespace network {
+
+    inline constexpr std::uint32_t MAX_LENGTH = 4096;
+    inline constexpr std::size_t HeaderSize = sizeof(std::uint16_t) + sizeof(std::uint32_t);
+
     class Protocol {
     public:
 
@@ -31,7 +35,9 @@ namespace network {
             // GUI
             GET_MATRIX = 10,
             GET_CLIENTS = 11,
-            INVOCATION = 12
+            INVOCATION = 12,
+            GIVE = 13,
+            HEAL = 14
         };
 
         enum class ResponseType : std::uint16_t {
@@ -43,6 +49,12 @@ namespace network {
             MATRIX_STATE,
             CLIENTS_STATE,
             EVENT
+        };
+
+        struct DecodeResult {
+            enum class Status {COMPLETE, INCOMPLETE, INVALID};
+            Status status{Status::INCOMPLETE};
+            std::optional<Frame> frame;
         };
 
         struct MessageHeader {
@@ -69,9 +81,7 @@ namespace network {
             std::string payload;
         };
 
-        static constexpr std::size_t HeaderSize =
-                sizeof(std::uint16_t) +
-                sizeof(std::uint32_t);
+
 
         static std::vector<std::byte> encode(
             MessageType type,
@@ -83,7 +93,7 @@ namespace network {
             const std::string &payload
         );
 
-        static std::optional<Frame> decode(
+        static DecodeResult decode(
             const std::vector<std::byte> &data
         );
 

@@ -12,6 +12,7 @@
 #include <winsock2.h>
 
 #include "zioop/network/Protocol.hpp"
+#include "zioop/core/Types.hpp"
 
 namespace network {
     class Connection {
@@ -30,12 +31,12 @@ namespace network {
             std::uint16_t port,
             FrameHandler frameHandler,
             DisconnectHandler disconnectHandler,
-            std::optional<std::size_t> clientId = std::nullopt
+            std::optional<core::ClientId> clientId = std::nullopt
         );
 
         ~Connection();
 
-        [[nodiscard]] std::size_t getClientId() const {
+        [[nodiscard]] core::ClientId getClientId() const {
             return m_clientId.value();
         }
 
@@ -50,7 +51,7 @@ namespace network {
         void join();
 
     private:
-        const std::optional<std::size_t> m_clientId;
+        const std::optional<core::ClientId> m_clientId;
         std::atomic<SOCKET> m_socket{INVALID_SOCKET};
 
         mutable std::mutex m_sendMutex;

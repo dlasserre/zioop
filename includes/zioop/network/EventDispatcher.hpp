@@ -5,7 +5,7 @@
 #include <functional>
 #include <vector>
 
-#include "../core/Event.hpp"
+#include "zioop/core/Event.hpp"
 
 namespace network {
 
@@ -13,7 +13,7 @@ namespace network {
     public:
 
         using Sender = std::function<void(
-            std::size_t clientId,
+            core::ClientId clientId,
             const std::vector<std::byte> &frame
         )>;
 

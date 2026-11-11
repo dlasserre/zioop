@@ -11,7 +11,7 @@ namespace network {
         const std::uint16_t port,
         FrameHandler frameHandler,
         DisconnectHandler disconnectHandler,
-        const std::optional<std::size_t> clientId
+        const std::optional<core::ClientId> clientId
     ) : m_clientId(clientId),
         m_socket(socket),
         m_ip(std::move(ip)),
@@ -86,20 +86,25 @@ namespace network {
                 );
 
                 while (m_running) {
-                    const auto frame = Protocol::decode(m_receiveBuffer);
-                    if (!frame) {
+                    const auto result = Protocol::decode(m_receiveBuffer);
+                    if (result.status == Protocol::DecodeResult::Status::INVALID) {
+                        m_running = false;
                         break;
                     }
-                    m_frameHandler(*this, *frame);
+                    if (result.status == Protocol::DecodeResult::Status::INCOMPLETE) {
+                        break;
+                    }
+
+                    m_frameHandler(*this, *result.frame);
 
                     const auto consumed = static_cast<std::ptrdiff_t>(
-                        Protocol::HeaderSize + frame->payload.size()
+                        HeaderSize + result.frame->payload.size()
                     );
                     m_receiveBuffer.erase(
                         m_receiveBuffer.begin(),
                         m_receiveBuffer.begin() + consumed
                     );
-                    std::cout << frame->payload << '\n';
+                    std::cout << result.frame->payload << '\n';
                 }
             } else if (received == 0) {
                 std::cout

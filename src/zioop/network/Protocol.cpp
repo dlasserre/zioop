@@ -1,15 +1,17 @@
 #include "zioop/network/Protocol.hpp"
 
+#include <iostream>
 #include <optional>
 #include <winsock2.h>
 
 namespace network {
+
     std::vector<std::byte> Protocol::encodeRaw(
         std::uint16_t type,
         const std::string &payload
     ) {
         const std::uint16_t networkType =
-                htons(static_cast<std::uint16_t>(type));
+                htons(type);
 
         const std::uint32_t networkLength =
                 htonl(static_cast<std::uint32_t>(payload.size()));
@@ -59,12 +61,11 @@ namespace network {
         );
     }
 
-    std::optional<Protocol::Frame> Protocol::decode(
+    Protocol::DecodeResult Protocol::decode(
         const std::vector<std::byte> &data
     ) {
-        // Pas encore assez pour lire le header
         if (data.size() < HeaderSize) {
-            return std::nullopt;
+            return {.status = DecodeResult::Status::INCOMPLETE};
         }
 
         std::uint16_t networkType{};
@@ -82,16 +83,15 @@ namespace network {
             sizeof(networkLength)
         );
 
-        const std::uint16_t type =
-            ntohs(networkType);
-        const std::uint32_t length =
-                ntohl(networkLength);
+        const std::uint16_t type = ntohs(networkType);
+        const std::uint32_t length = ntohl(networkLength);
 
-        const std::size_t totalLength =
-                HeaderSize + length;
+        if (length > MAX_LENGTH) {
+            return {.status = DecodeResult::Status::INVALID};
+        }
 
-        if (data.size() < totalLength) {
-            return std::nullopt;
+        if (data.size() < HeaderSize + length) {
+            return {.status = DecodeResult::Status::INCOMPLETE};
         }
 
         const std::string payload(
@@ -101,9 +101,9 @@ namespace network {
             length
         );
 
-        return Frame{
-            .type = type,
-            .payload = payload
+        return {
+            .status = DecodeResult::Status::COMPLETE,
+            .frame = Frame{.type = type, .payload = payload}
         };
     }
 }

@@ -42,6 +42,8 @@ namespace network {
     [[nodiscard]]
     nlohmann::json serializeInvocation(const core::InvocationResult &invocation);
 
+    [[nodiscard]]
+    nlohmann::json serializeGive(const core::GiveResponse &give);
 
     // Overload events
     [[nodiscard]]
@@ -52,4 +54,7 @@ namespace network {
 
     [[nodiscard]]
     nlohmann::json serializeEvent(const core::RitualCompleted &event);
+
+    [[nodiscard]]
+    nlohmann::json serializeEvent(const core::DeletedRottenResources &event);
 }
