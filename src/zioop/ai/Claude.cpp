@@ -23,6 +23,17 @@ namespace {
     constexpr std::uint64_t InvocationWarmup = 5;
     constexpr std::uint64_t InvocationCooldown = 30;
     constexpr std::uint64_t InvocationBackoff = 60;
+    constexpr int Damage = 2;
+    constexpr int LowHealth = 30;
+    constexpr std::uint64_t FleeDuration = 4;
+    constexpr std::uint64_t SpareAfterFlight = 40;
+    constexpr std::uint64_t GiveBackoff = 10;
+    constexpr std::uint64_t RequestCooldown = 30;
+    constexpr std::uint64_t RequestLifetime = 40;
+
+    constexpr std::array<std::string_view, 4> RequestNames{"pomme", "gateau", "viande", "eau"};
+
+    constexpr std::array<int, 4> ShelfLife{30, 15, 12, (std::numeric_limits<int>::max)()};
 
     constexpr std::array<const char *, 4> ResourceNames{"une pomme", "un gâteau", "de la viande", "de l'eau magique"};
 
@@ -71,8 +82,9 @@ namespace {
 
 Claude::Counts Claude::requirements(const Memory &memory) const {
     switch (memory.level) {
-        case 1: return {20, 0, 4, 0};
-        case 2: return {50, 8, 10, 0};
+        case 1: return {10, 0, 2, 0};
+        case 2: return {20, 0, 4, 0};
+        case 3: return {50, 8, 10, 0};
         default: return {};
     }
 }
@@ -100,13 +112,30 @@ std::optional<int> Claude::wantedResourceAt(const Memory &memory, const Point &p
     const bool collectAnything = memory.ritualBackoff > 0 ||
                                  std::ranges::all_of(needed, [](const std::size_t value) { return value == 0; });
 
+    const auto deficitOf = [&](const std::size_t type) {
+        return needed[type] > memory.inventory[type] ? needed[type] - memory.inventory[type] : std::size_t{0};
+    };
+
+    const auto longerLivedDeficit = [&](const std::size_t type) {
+        std::size_t missing = 0;
+        for (std::size_t other = 0; other < ResourceKinds; ++other) {
+            if (!memory.untakeable[other] && ShelfLife[other] > ShelfLife[type]) {
+                missing += deficitOf(other);
+            }
+        }
+        return missing;
+    };
+
     std::optional<int> best;
     std::size_t bestDeficit = 0;
     for (std::size_t type = 0; type < ResourceKinds; ++type) {
         if (cell->second.resources[type] == 0 || memory.untakeable[type]) {
             continue;
         }
-        const std::size_t deficit = needed[type] > memory.inventory[type] ? needed[type] - memory.inventory[type] : 0;
+        const std::size_t deficit = deficitOf(type);
+        if (deficit > 0 && longerLivedDeficit(type) > deficit) {
+            continue;
+        }
         if ((deficit > bestDeficit) || (collectAnything && !best)) {
             best = static_cast<int>(type);
             bestDeficit = deficit;
@@ -153,11 +182,15 @@ void Claude::absorbLook(Memory &memory, const nlohmann::json &payload) {
                     continue;
                 }
                 const auto id = other["id"].get<std::size_t>();
+                const int health = other.value("health", 100);
                 if (isOwnAgent(id)) {
+                    if (const auto ally = m_memory.find(id); ally != m_memory.end()) {
+                        feelHealth(ally->second, health);
+                    }
                     continue;
                 }
                 const int level = other.value("level", 1);
-                memory.enemies[id] = {.position = *position, .level = level, .seenAt = memory.clock};
+                memory.enemies[id] = {.position = *position, .level = level, .health = health, .seenAt = memory.clock};
                 if (level > memory.level && memory.clock - memory.lastShout > ShoutCooldown) {
                     memory.pendingShout = std::format("Attention, ennemi niveau {} en {},{}", level,
                                                       position->first, position->second);
@@ -197,8 +230,22 @@ bool Claude::absorbRitualEvent(Memory &memory, const nlohmann::json &payload) {
     return true;
 }
 
+void Claude::absorbRotten(Memory &memory, const std::vector<int> &lost) {
+    for (const int type: lost) {
+        if (type >= 0 && type < static_cast<int>(ResourceKinds)) {
+            auto &count = memory.inventory[static_cast<std::size_t>(type)];
+            count = count > 0 ? count - 1 : 0;
+        }
+    }
+}
+
 void Claude::absorbRumors(const std::size_t agentId, Memory &memory) {
     static const std::regex coordinates(R"((\d+)\s*,\s*(\d+))");
+    static const std::regex request(R"(Besoin de (\w+) x(\d+) en (\d+)\s*,\s*(\d+))");
+
+    std::erase_if(memory.requests, [&memory](const auto &entry) {
+        return memory.clock > entry.second.heardAt + RequestLifetime;
+    });
 
     const auto heard = takeHeard(agentId);
     if (!heard) {
@@ -206,6 +253,22 @@ void Claude::absorbRumors(const std::size_t agentId, Memory &memory) {
     }
 
     std::smatch match;
+    if (std::regex_search(heard->message, match, request)) {
+        const auto kind = std::ranges::find(RequestNames, match[1].str());
+        if (kind != RequestNames.end() && heard->speakerId && *heard->speakerId != agentId &&
+            isOwnAgent(*heard->speakerId)) {
+            const Point where{std::stoi(match[3].str()), std::stoi(match[4].str())};
+            memory.requests[*heard->speakerId] = {
+                .type = static_cast<std::size_t>(kind - RequestNames.begin()),
+                .where = where,
+                .heardAt = memory.clock
+            };
+            std::cout << "[" << agentId << "] L'allie #" << *heard->speakerId << " demande " << *kind
+                      << " en " << describe(where) << std::endl;
+        }
+        return;
+    }
+
     if (heard->message.find("ennemi") != std::string::npos || !std::regex_search(heard->message, match, coordinates)) {
         return;
     }
@@ -289,6 +352,9 @@ void Claude::remember(Memory &memory, const Decision &previous, const bool ok, c
         case MessageType::ATTACK:
             rememberAttack(memory, previous, ok, payload);
             break;
+        case MessageType::GIVE:
+            rememberGive(memory, previous, ok, payload);
+            break;
         case MessageType::INVOCATION:
             rememberInvocation(memory, previous, ok, payload);
             break;
@@ -371,6 +437,9 @@ void Claude::rememberAttack(Memory &memory, const Decision &previous, const bool
             memory.pendingShout = std::format("Ennemi #{} vaincu !", target);
             std::cout << "[" << self << "] Ennemi #" << target << " vaincu." << std::endl;
         } else {
+            if (const auto enemy = memory.enemies.find(target); enemy != memory.enemies.end()) {
+                enemy->second.health -= memory.level * Damage;
+            }
             std::cout << "[" << self << "] Touche l'ennemi #" << target << "." << std::endl;
         }
         return;
@@ -394,6 +463,124 @@ bool Claude::wantsReinforcement(const Memory &memory) const {
     return memory.clock > InvocationWarmup &&
            memory.clock >= memory.nextInvocation &&
            m_memory.size() + m_pendingInvocations < MaxTeamSize;
+}
+
+Claude::Counts Claude::deficit(const Memory &memory) const {
+    const auto needed = requirements(memory);
+    Counts missing{};
+    for (std::size_t type = 0; type < ResourceKinds; ++type) {
+        missing[type] = needed[type] > memory.inventory[type] ? needed[type] - memory.inventory[type] : 0;
+    }
+    return missing;
+}
+
+Claude::Counts Claude::surplus(const Memory &memory) const {
+    const auto needed = requirements(memory);
+    Counts extra{};
+    for (std::size_t type = 0; type < ResourceKinds; ++type) {
+        extra[type] = memory.inventory[type] > needed[type] ? memory.inventory[type] - needed[type] : 0;
+    }
+    return extra;
+}
+
+std::optional<std::pair<std::size_t, int>> Claude::donation(const std::size_t agentId, const Memory &memory) const {
+    if (!memory.position || memory.clock < memory.nextGive) {
+        return std::nullopt;
+    }
+
+    const auto extra = surplus(memory);
+    std::optional<std::pair<std::size_t, int>> best;
+    std::size_t bestNeed = 0;
+    for (const auto &[allyId, ally]: m_memory) {
+        if (allyId == agentId || ally.inRitual || ally.position != memory.position) {
+            continue;
+        }
+        const auto missing = deficit(ally);
+        for (std::size_t type = 0; type < ResourceKinds; ++type) {
+            if (extra[type] > 0 && missing[type] > bestNeed) {
+                best = std::pair{allyId, static_cast<int>(type)};
+                bestNeed = missing[type];
+            }
+        }
+    }
+    return best;
+}
+
+std::optional<Claude::Point> Claude::allyInNeed(const std::size_t agentId, const Memory &memory) const {
+    if (!memory.position) {
+        return std::nullopt;
+    }
+
+    const auto extra = surplus(memory);
+    std::optional<Point> closest;
+    int closestDistance = (std::numeric_limits<int>::max)();
+    for (const auto &[allyId, request]: memory.requests) {
+        if (allyId == agentId || request.type >= ResourceKinds || extra[request.type] == 0) {
+            continue;
+        }
+        Point where = request.where;
+        if (const auto ally = m_memory.find(allyId); ally != m_memory.end()) {
+            if (ally->second.inRitual || deficit(ally->second)[request.type] == 0) {
+                continue;
+            }
+            if (ally->second.position) {
+                where = *ally->second.position;
+            }
+        }
+        const int away = distance(*memory.position, where);
+        if (away < closestDistance) {
+            closest = where;
+            closestDistance = away;
+        }
+    }
+    return closest;
+}
+
+std::optional<std::string> Claude::resourceRequest(const Memory &memory) const {
+    if (!memory.position || m_memory.size() < 2 || memory.clock < memory.lastRequest + RequestCooldown) {
+        return std::nullopt;
+    }
+
+    const auto missing = deficit(memory);
+    std::size_t worst = 0;
+    for (std::size_t type = 1; type < ResourceKinds; ++type) {
+        if (missing[type] > missing[worst]) {
+            worst = type;
+        }
+    }
+    if (missing[worst] == 0) {
+        return std::nullopt;
+    }
+
+    return std::format("Besoin de {} x{} en {},{}", RequestNames[worst], missing[worst],
+                       memory.position->first, memory.position->second);
+}
+
+void Claude::rememberGive(Memory &memory, const Decision &previous, const bool ok, const nlohmann::json &payload) {
+    const auto self = previous.parameters.value("agentID", std::size_t{0});
+    const auto targetId = previous.parameters.value("targetID", std::size_t{0});
+    const int type = previous.parameters.value("type", -1);
+
+    if (!ok) {
+        memory.nextGive = memory.clock + GiveBackoff;
+        std::cerr << "[" << self << "] Don refuse : " << payload.value("message", std::string{}) << std::endl;
+        return;
+    }
+
+    if (type < 0 || type >= static_cast<int>(ResourceKinds)) {
+        return;
+    }
+
+    auto &mine = memory.inventory[static_cast<std::size_t>(type)];
+    mine = mine > 0 ? mine - 1 : 0;
+    if (const auto ally = m_memory.find(targetId); ally != m_memory.end()) {
+        ++ally->second.inventory[static_cast<std::size_t>(type)];
+        if (deficit(ally->second)[static_cast<std::size_t>(type)] == 0) {
+            memory.requests.erase(targetId);
+        }
+    }
+    std::cout << "[" << self << "] J'ai donne " << ResourceNames[static_cast<std::size_t>(type)]
+              << " a l'allie #" << targetId << "." << std::endl;
 }
 
 void Claude::rememberInvocation(Memory &memory, const Decision &previous, const bool ok, const nlohmann::json &payload) {
@@ -438,24 +625,59 @@ std::optional<std::size_t> Claude::enemyToStrike(const Memory &memory) const {
     return best;
 }
 
-std::optional<Claude::Point> Claude::nearestThreat(const Memory &memory) const {
+void Claude::feelHealth(Memory &memory, const int health) {
+    if (health < memory.health) {
+        memory.hurtAt = memory.clock;
+    }
+    memory.health = health;
+}
+
+std::optional<Claude::Point> Claude::losingFight(const Memory &memory) const {
     if (!memory.position) {
         return std::nullopt;
     }
 
+    int incoming = 0;
+    int enemyHealth = 0;
+    int weakest = (std::numeric_limits<int>::max)();
     std::optional<Point> closest;
-    int closestDistance = 2;
+    int closestDistance = (std::numeric_limits<int>::max)();
     for (const auto &enemy: memory.enemies | std::views::values) {
-        if (enemy.level <= memory.level || memory.clock > enemy.seenAt + 3) {
+        const int away = distance(*memory.position, enemy.position);
+        if (away > 1 || memory.clock > enemy.seenAt + 3) {
             continue;
         }
-        const int away = distance(*memory.position, enemy.position);
+        if (enemy.level >= memory.level) {
+            incoming += enemy.level * Damage;
+        }
+        enemyHealth += (std::max)(enemy.health, 1);
+        weakest = (std::min)(weakest, enemy.level);
         if (away < closestDistance) {
             closest = enemy.position;
             closestDistance = away;
         }
     }
-    return closest;
+    if (!closest || incoming == 0) {
+        return std::nullopt;
+    }
+
+    int outgoing = 0;
+    for (const auto &ally: m_memory | std::views::values) {
+        if (ally.position && ally.level >= weakest && distance(*ally.position, *memory.position) <= 1) {
+            outgoing += ally.level * Damage;
+        }
+    }
+
+    const int turnsToDie = ((std::max)(memory.health, 1) + incoming - 1) / incoming;
+    const int turnsToWin = outgoing == 0
+                               ? (std::numeric_limits<int>::max)()
+                               : (enemyHealth + outgoing - 1) / outgoing;
+    const bool bleeding = memory.clock <= memory.hurtAt + 2 && memory.health <= LowHealth;
+
+    if (turnsToWin > turnsToDie + 1 || bleeding) {
+        return closest;
+    }
+    return std::nullopt;
 }
 
 std::optional<std::pair<std::size_t, Claude::Point>> Claude::nearestPrey(const Memory &memory) const {
@@ -550,6 +772,30 @@ void Claude::decide(
         return;
     }
 
+    if (const auto danger = losingFight(memory)) {
+        if (memory.clock >= memory.fleeUntil) {
+            std::cout << "[" << agentId << "] Combat perdu d'avance (" << memory.health
+                      << " PV), je fuis " << describe(*danger) << "." << std::endl;
+        }
+        memory.fleeUntil = memory.clock + FleeDuration;
+        memory.fleeFrom = *danger;
+        for (const auto &[id, enemy]: memory.enemies) {
+            if (distance(enemy.position, *memory.position) <= 1) {
+                memory.spared[id] = memory.clock + SpareAfterFlight;
+            }
+        }
+    }
+
+    if (memory.fleeFrom && memory.clock < memory.fleeUntil) {
+        if (const auto escape = stepAway(memory, *memory.fleeFrom)) {
+            memory.target.reset();
+            memory.plannedMove.reset();
+            move(agentId, *escape);
+            return;
+        }
+    }
+    memory.fleeFrom.reset();
+
     if (memory.pendingShout) {
         broadcast(agentId, *memory.pendingShout);
         memory.pendingShout.reset();
@@ -557,20 +803,10 @@ void Claude::decide(
         return;
     }
 
-    if (const auto danger = nearestThreat(memory)) {
-        if (const auto escape = stepAway(memory, *danger)) {
-            memory.target.reset();
-            if (previous == MessageType::LOOK && memory.plannedMove) {
-                const auto direction = *memory.plannedMove;
-                memory.plannedMove.reset();
-                move(agentId, direction);
-                return;
-            }
-            std::cout << "[" << agentId << "] Ennemi trop fort en " << describe(*danger) << ", je fuis." << std::endl;
-            memory.plannedMove = *escape;
-            look(agentId, *escape);
-            return;
-        }
+    if (const auto request = resourceRequest(memory)) {
+        memory.lastRequest = memory.clock;
+        broadcast(agentId, *request);
+        return;
     }
 
     if (const auto target = enemyToStrike(memory)) {
@@ -590,6 +826,11 @@ void Claude::decide(
     if (canPerformRitual(memory)) {
         std::cout << "[" << agentId << "] J'ai tout ce qu'il faut, je lance le rituel." << std::endl;
         ritual(agentId);
+        return;
+    }
+
+    if (const auto gift = donation(agentId, memory)) {
+        give(agentId, gift->first, gift->second);
         return;
     }
 
@@ -613,7 +854,14 @@ void Claude::decide(
     if (memory.target && memory.position && *memory.target == *memory.position) {
         memory.target.reset();
     }
-    if (!memory.target || !wantedResourceAt(memory, *memory.target)) {
+    const bool chasingResources = memory.target && wantedResourceAt(memory, *memory.target).has_value();
+    if (const auto ally = allyInNeed(agentId, memory); ally && !chasingResources) {
+        if (memory.target != ally) {
+            std::cout << "[" << agentId << "] Je rejoins un allie en " << describe(*ally)
+                      << " qui a demande des ressources." << std::endl;
+        }
+        memory.target = ally;
+    } else if (!chasingResources) {
         memory.target = chooseTarget(memory);
         if (memory.target && memory.position) {
             const bool resources = wantedResourceAt(memory, *memory.target).has_value();
@@ -676,6 +924,7 @@ void Claude::think(
         if (const auto event = takeRitualEvent(agentId)) {
             absorbRitualEvent(memory, nlohmann::json::parse(*event, nullptr, false));
         }
+        absorbRotten(memory, takeRotten(agentId));
     } catch (const nlohmann::json::exception &error) {
         std::cerr << "[" << agentId << "] Unreadable response: " << error.what() << std::endl;
     }

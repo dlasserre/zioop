@@ -41,7 +41,7 @@ function visit(state: State): void {
 export function initialState(reply: GameReply): State {
   if (!reply.ok) throw new Error(`HELLO rejected: ${String(reply.data)}`);
   const data = object(reply.data);
-  const state: State = { agentId: integer(data.agentID, 1), level: 1, position: position(data.position), inventory: null, memory: "", visited: {}, agents: {}, kills: 0 };
+  const state: State = { agentId: integer(data.agentId, 1), level: 1, position: position(data.position), inventory: null, memory: "", visited: {}, agents: {}, kills: 0 };
   visit(state);
   return state;
 }
@@ -55,7 +55,7 @@ export function updateState(state: State, command: string, reply: GameReply): vo
     state.inventory = data.resources;
   }
   if (command === "RITUAL") {
-    if (integer(data.agentID, 1) !== state.agentId) throw new Error("Ritual response belongs to another agent");
+    if (integer(data.agentId, 1) !== state.agentId) throw new Error("Ritual response belongs to another agent");
     const level = integer(data.level, 2);
     if (level !== state.level + 1) throw new Error("Unexpected level in ritual response");
     state.level = level;

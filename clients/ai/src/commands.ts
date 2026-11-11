@@ -81,7 +81,7 @@ ATTACK(target): attaque l'agent dont l'id est target. La cible doit être sur ta
 En cas de succès, OK avec {targetId,killed}: la cible est éliminée de la partie. Sinon KO avec la raison (cible introuvable, trop loin, trop forte...).
 Un agent de niveau supérieur ou égal présent sur ta cellule peut aussi t'éliminer. Si toutes tes commandes répondent KO car ton agent est introuvable, il a été éliminé: utilise STOP.
 INVENTORY: renvoie les quantités transportées.
-RITUAL: consomme 10 fruits au lancement, puis dure 30 secondes multipliées par le niveau cible. Le serveur ne répond OK qu'à la FIN, avec {agentID,level}.
+RITUAL: consomme 10 fruits au lancement, puis dure 30 secondes multipliées par le niveau cible. Le serveur ne répond OK qu'à la FIN, avec {agentId,level}.
 Pendant cette attente, le client n'envoie aucune autre commande. KO signifie que le rituel n'a pas démarré: aucun fruit consommé.
 HISTORY: commande LOCALE pour consulter le journal de cette partie. historyLimit: 1..20; historyBefore: null pour la fin, sinon séquence exclusive pour paginer vers le passé.
 STOP: arrête proprement le client.

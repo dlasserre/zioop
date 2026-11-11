@@ -88,6 +88,16 @@ namespace ai {
         );
     }
 
+    void Bot::give(const std::size_t agentId, const std::size_t targetId, const int type) {
+        std::cout << "[" << agentId << "] Giving type " << type << " to agent " << targetId << std::endl;
+
+        sendDecision(
+            agentId,
+            network::Protocol::MessageType::GIVE,
+            {{"agentID", agentId}, {"targetID", targetId}, {"type", type}}
+        );
+    }
+
     bool Bot::isOwnAgent(const std::size_t agentId) {
         std::lock_guard lock(m_stateMutex);
         return m_history.contains(agentId);
@@ -145,6 +155,17 @@ namespace ai {
         return payload;
     }
 
+    std::vector<int> Bot::takeRotten(const std::size_t agentId) {
+        std::lock_guard lock(m_stateMutex);
+        const auto rotten = m_rotten.find(agentId);
+        if (rotten == m_rotten.end()) {
+            return {};
+        }
+        auto lost = std::move(rotten->second);
+        m_rotten.erase(rotten);
+        return lost;
+    }
+
     void Bot::resumeAfterRitual(const std::size_t agentId, const std::string &payload) {
         std::cout << "[" << agentId << "] Ritual completed: " << payload << std::endl;
 
@@ -181,12 +202,30 @@ namespace ai {
             return;
         }
 
-        const auto agent = event.find("agentID");
+        const auto agent = event.find("agentId");
         const auto message = event.find("message");
 
         if (event.value("type", std::string{}) == "Ritual" &&
             agent != event.end() && agent->is_number_unsigned()) {
             resumeAfterRitual(agent->get<std::size_t>(), payload);
+            return;
+        }
+        if (event.value("type", std::string{}) == "RottenResources" &&
+            agent != event.end() && agent->is_number_unsigned()) {
+            const auto agentId = agent->get<std::size_t>();
+            std::vector<int> lost;
+            if (const auto resources = event.find("resources");
+                resources != event.end() && resources->is_array()) {
+                for (const auto &resource: *resources) {
+                    if (resource.is_number_integer()) {
+                        lost.push_back(resource.get<int>());
+                    }
+                }
+            }
+            std::cout << "[" << agentId << "] Lost " << lost.size() << " rotten resource(s)" << std::endl;
+            std::lock_guard lock(m_stateMutex);
+            auto &pending = m_rotten[agentId];
+            pending.insert(pending.end(), lost.begin(), lost.end());
             return;
         }
         if (agent == event.end() || !agent->is_number_unsigned() ||
@@ -374,10 +413,7 @@ namespace ai {
             return field->get<std::size_t>();
         };
 
-        auto payloadAgent = readId("agentID");
-        if (!payloadAgent) {
-            payloadAgent = readId("agentId");
-        }
+        const auto payloadAgent = readId("agentId");
         const auto spawnedAgent = readId("spawnedAgentId");
 
         std::size_t agentId = 0;
@@ -519,7 +555,7 @@ namespace ai {
                 throw std::runtime_error(response.payload);
             }
             const auto data = nlohmann::json::parse(response.payload);
-            const auto agentId = data.at("agentID").get<std::size_t>();
+            const auto agentId = data.at("agentId").get<std::size_t>();
             {
                 std::lock_guard<std::mutex> lock(m_stateMutex);
                 m_history.try_emplace(agentId);

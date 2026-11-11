@@ -124,20 +124,20 @@ test("history paginates older events and persists actual replies", async (t) => 
 });
 
 test("state uses successful server results and allows full ritual durations", () => {
-  const state = initialState({ ok: true, data: { agentID: 12, position: { x: 2, y: 3 } } });
+  const state = initialState({ ok: true, data: { agentId: 12, position: { x: 2, y: 3 } } });
   updateState(state, "MOVE", { ok: false, data: "Blocked" });
   assert.deepEqual(state.position, { x: 2, y: 3 });
   updateState(state, "MOVE", { ok: true, data: { position: { x: 1, y: 3 } } });
   assert.equal(state.visited["1,3"], 1);
-  updateState(state, "RITUAL", { ok: true, data: { agentID: 12, level: 2 } });
+  updateState(state, "RITUAL", { ok: true, data: { agentId: 12, level: 2 } });
   assert.equal(state.level, 2);
   assert.equal(state.inventory, null);
   assert.equal(responseTimeout("RITUAL", 2), 105_000);
-  assert.throws(() => updateState(state, "RITUAL", { ok: true, data: { agentID: 99, level: 3 } }), /another agent/);
+  assert.throws(() => updateState(state, "RITUAL", { ok: true, data: { agentId: 99, level: 3 } }), /another agent/);
 });
 
 test("state remembers agents seen by LOOK and forgets eliminated targets", () => {
-  const state = initialState({ ok: true, data: { agentID: 12, position: { x: 2, y: 2 } } });
+  const state = initialState({ ok: true, data: { agentId: 12, position: { x: 2, y: 2 } } });
   updateState(state, "LOOK", { ok: true, data: { cells: [
     { position: [2, 2], resources: [], agents: [{ id: 7, level: 1 }, { id: 9, level: 3 }] },
     { position: [2, 1], resources: [{ type: 0, rotting: 0 }] },
@@ -168,7 +168,7 @@ test("connection serializes requests and receives a delayed response", async (t)
   const connection = await fixture(t, (type, _data, socket) => {
     if (type === Message.DISCONNECT) return;
     setTimeout(() => {
-      const frame = encode(0, { agentID: 1, level: 2 });
+      const frame = encode(0, { agentId: 1, level: 2 });
       socket.write(frame.subarray(0, 3));
       socket.write(frame.subarray(3));
     }, 30);
@@ -176,7 +176,7 @@ test("connection serializes requests and receives a delayed response", async (t)
   const signal = new AbortController().signal;
   const pending = connection.request(Message.RITUAL, { agentID: 1 }, 500, signal);
   await assert.rejects(connection.request(Message.MOVE, { agentID: 1 }, 500, signal), /Only one/);
-  assert.deepEqual(await pending, { ok: true, data: { agentID: 1, level: 2 } });
+  assert.deepEqual(await pending, { ok: true, data: { agentId: 1, level: 2 } });
 });
 
 test("timeout closes the connection instead of replaying an uncertain command", async (t) => {
@@ -201,12 +201,12 @@ for (const provider of ["Codex", "Claude"]) test(`${provider} game loop retains 
     if (type === Message.DISCONNECT) return;
     assert.equal(ritualPending, false, "No command should overlap the ritual");
     sent.push(type);
-    if (type === Message.HELLO) socket.write(encode(0, { agentID: 12, position: { x: 2, y: 2 } }));
+    if (type === Message.HELLO) socket.write(encode(0, { agentId: 12, position: { x: 2, y: 2 } }));
     if (type === Message.LOOK) socket.write(encode(0, { cells: [{ position: [2, 2], resources: [{ type: 0, rotting: 0 }] }] }));
     if (type === Message.TAKE) socket.write(encode(0, { resources: [{ type: 0, quantity: 10 }] }));
     if (type === Message.RITUAL) {
       ritualPending = true;
-      setTimeout(() => { ritualPending = false; socket.write(encode(0, { agentID: 12, level: 2 })); }, 40);
+      setTimeout(() => { ritualPending = false; socket.write(encode(0, { agentId: 12, level: 2 })); }, 40);
     }
   });
   const prompts: string[] = [];
@@ -231,7 +231,7 @@ for (const provider of ["Codex", "Claude"]) test(`${provider} game loop retains 
 test("game loop attacks an agent seen on its cell", async (t) => {
   const attacks: Record<string, unknown>[] = [];
   const connection = await fixture(t, (type, data, socket) => {
-    if (type === Message.HELLO) socket.write(encode(0, { agentID: 12, position: { x: 2, y: 2 } }));
+    if (type === Message.HELLO) socket.write(encode(0, { agentId: 12, position: { x: 2, y: 2 } }));
     if (type === Message.LOOK) socket.write(encode(0, { cells: [{ position: [2, 2], resources: [], agents: [{ id: 7, level: 1 }] }] }));
     if (type === Message.ATTACK) {
       attacks.push(data);
@@ -254,7 +254,7 @@ test("three invalid model decisions stop without sending an action", async (t) =
   const connection = await fixture(t, (type, _data, socket) => {
     if (type === Message.DISCONNECT) return;
     sent.push(type);
-    socket.write(encode(0, { agentID: 1, position: { x: 0, y: 0 } }));
+    socket.write(encode(0, { agentId: 1, position: { x: 0, y: 0 } }));
   });
   const runDirectory = await directory(t);
   await assert.rejects(runAgent({ connection, brain: { name: "Codex", threadId: null, async decide() { return "not json"; } }, journal: new Journal(join(runDirectory, "history.jsonl")),

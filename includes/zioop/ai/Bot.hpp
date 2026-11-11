@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <optional>
+#include <vector>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <array>
@@ -66,6 +67,7 @@ namespace ai {
         virtual void invocation(std::size_t agentId) final;
         virtual void broadcast(std::size_t agentId, const std::string &message) final;
         virtual void attack(std::size_t agentId, std::size_t targetId) final;
+        virtual void give(std::size_t agentId, std::size_t targetId, int type) final;
 
         [[nodiscard]]
         virtual bool isOwnAgent(std::size_t agentId) final;
@@ -87,6 +89,9 @@ namespace ai {
         [[nodiscard]]
         virtual std::optional<std::string> takeRitualEvent(std::size_t agentId) final;
 
+        [[nodiscard]]
+        virtual std::vector<int> takeRotten(std::size_t agentId) final;
+
     private:
 
         void listen(const std::string &payload);
@@ -96,6 +101,7 @@ namespace ai {
         std::unordered_map<std::size_t, Heard> m_heard{};
         std::unordered_set<std::size_t> m_waiting{};
         std::unordered_map<std::size_t, std::string> m_ritualEvents{};
+        std::unordered_map<std::size_t, std::vector<int>> m_rotten{};
 
         struct Incoming {
             std::size_t agentId;

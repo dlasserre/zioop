@@ -8,6 +8,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "zioop/ai/Bot.hpp"
 
@@ -43,11 +44,20 @@ namespace ai {
         struct Enemy {
             Point position;
             int level{1};
+            int health{100};
             std::uint64_t seenAt{0};
+        };
+
+        struct Request {
+            std::size_t type{0};
+            Point where{};
+            std::uint64_t heardAt{0};
         };
 
         struct Memory {
             std::map<std::size_t, Enemy> enemies;
+            std::map<std::size_t, Request> requests;
+            std::uint64_t lastRequest{0};
             std::map<std::size_t, std::uint64_t> spared;
             std::optional<Point> position;
             std::map<Point, KnownCell> cells;
@@ -66,6 +76,11 @@ namespace ai {
             std::size_t ritualLooks{0};
             std::optional<std::string> pendingShout;
             std::uint64_t nextInvocation{0};
+            int health{100};
+            std::uint64_t hurtAt{0};
+            std::uint64_t fleeUntil{0};
+            std::optional<Point> fleeFrom;
+            std::uint64_t nextGive{0};
         };
 
         void remember(Memory &memory, const Decision &previous, bool ok, const nlohmann::json &payload);
@@ -73,6 +88,8 @@ namespace ai {
         void absorbLook(Memory &memory, const nlohmann::json &payload);
 
         static bool absorbRitualEvent(Memory &memory, const nlohmann::json &payload);
+
+        static void absorbRotten(Memory &memory, const std::vector<int> &lost);
 
         void absorbRumors(std::size_t agentId, Memory &memory);
 
@@ -88,7 +105,9 @@ namespace ai {
 
         [[nodiscard]] std::optional<std::size_t> enemyToStrike(const Memory &memory) const;
 
-        [[nodiscard]] std::optional<Point> nearestThreat(const Memory &memory) const;
+        [[nodiscard]] std::optional<Point> losingFight(const Memory &memory) const;
+
+        static void feelHealth(Memory &memory, int health);
 
         [[nodiscard]] std::optional<std::pair<std::size_t, Point>> nearestPrey(const Memory &memory) const;
 
@@ -99,6 +118,18 @@ namespace ai {
         [[nodiscard]] std::optional<core::Direction> stepToward(const Memory &memory, const Point &target) const;
 
         [[nodiscard]] bool wantsReinforcement(const Memory &memory) const;
+
+        [[nodiscard]] Counts deficit(const Memory &memory) const;
+
+        [[nodiscard]] Counts surplus(const Memory &memory) const;
+
+        [[nodiscard]] std::optional<std::pair<std::size_t, int>> donation(std::size_t agentId, const Memory &memory) const;
+
+        [[nodiscard]] std::optional<Point> allyInNeed(std::size_t agentId, const Memory &memory) const;
+
+        [[nodiscard]] std::optional<std::string> resourceRequest(const Memory &memory) const;
+
+        void rememberGive(Memory &memory, const Decision &previous, bool ok, const nlohmann::json &payload);
 
         void rememberInvocation(Memory &memory, const Decision &previous, bool ok, const nlohmann::json &payload);
 
