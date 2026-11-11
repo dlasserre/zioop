@@ -15,4 +15,8 @@ namespace core {
         EAST = 180,
         WEST = 270,
     };
+
+    enum class AgentId : std::uint64_t {};
+
+    enum class ClientId : std::uint64_t {};
 }

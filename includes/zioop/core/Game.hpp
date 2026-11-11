@@ -6,6 +6,8 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <array>
+#include <cstddef>
 
 #include "Event.hpp"
 #include "Inventory.hpp"
@@ -15,18 +17,31 @@
 #include "zioop/core/MatrixSnapshot.hpp"
 
 namespace core {
+
+    constexpr int MAX_MONSTERS = 5;
+
+    inline constexpr std::array<ResourceCount, MAX_MONSTERS> requirements{
+        {
+            {20, 5, 1, 0},
+            {30, 6, 2, 0},
+            {40, 7, 3, 0},
+            {50, 8, 4, 0},
+            {60, 9, 5, 0}
+        }
+    };
+
     class Game {
     public:
         static constexpr std::chrono::seconds RitualTimePerLevel{30};
 
         struct InitPlacement {
-            std::size_t agentId;
+            AgentId agentId;
             Position position;
         };
 
         struct TakeResult {
             bool taken;
-            std::vector<InventoryResource> inventory;
+            std::vector<Inventory::InventoryResource> inventory;
         };
 
         std::vector<Event> drainEvents();
@@ -37,84 +52,97 @@ namespace core {
 
         [[nodiscard]]
         std::optional<InitPlacement> initClient(
-            std::size_t clientId
+            ClientId clientId
         );
 
-        std::optional<InvocationResult> createAgent(
-            std::size_t clientId,
-            std::size_t agentId
+        std::optional<InvocationResult> instanciatAgent(
+            ClientId clientId,
+            AgentId agentId
         );
 
         [[nodiscard]]
         std::optional<MoveResult> move(
-            std::size_t clientId,
-            std::size_t agentId,
+            ClientId clientId,
+            AgentId agentId,
             Direction direction
         );
 
         [[nodiscard]]
         std::optional<BroadcastResult> broadcast(
-            std::size_t clientId,
-            std::size_t agentId,
-            const std::string &message
+            ClientId clientId,
+            AgentId agentId,
+            std::string &message
         );
 
         [[nodiscard]]
         std::optional<LookResult> look(
-            std::size_t clientId,
-            std::size_t agentId,
+            ClientId clientId,
+            AgentId agentId,
             Direction direction
         );
 
         [[nodiscard]]
         std::optional<TakeResult> take(
-            std::size_t clientId,
-            std::size_t agentId,
+            ClientId clientId,
+            AgentId agentId,
             ResourceType type
         );
 
         [[nodiscard]]
+        std::optional<GiveResult> give(
+            ClientId clientId,
+            AgentId agentId,
+            ResourceType type,
+            AgentId targetId
+        );
+
+        [[nodiscard]]
         std::optional<InventoryResult> inventory(
-            std::size_t clientId,
-            std::size_t agentId
+            ClientId clientId,
+            AgentId agentId
         );
 
         [[nodiscard]]
         std::optional<RitualResult> ritual(
-            std::size_t clientId,
-            std::size_t agentId
+            ClientId clientId,
+            AgentId agentId
         );
 
         [[nodiscard]]
         std::optional<AttackResult> attack(
-            std::size_t clientId,
-            std::size_t agentId,
-            std::size_t targetId
+            ClientId clientId,
+            AgentId agentId,
+            AgentId targetId
         );
 
         MatrixSnapshot getMatrix() const;
 
-        void removeClientAgent(std::size_t clientId);
+        void removeClientAgent(ClientId clientId);
 
+        [[nodiscard]] std::size_t countMonsters(ClientId clientId);
     private:
+
+        int  m_test{0};
+
+
 
         void emitUnlocked(Event event);
 
-        std::optional<std::size_t> findOwnerUnlocked(std::size_t agentId);
+        std::optional<ClientId> findOwnerUnlocked(AgentId agentId);
 
         std::queue<Event> m_events;
 
-        Agent* findAgentUnlocked(std::size_t clientId, std::size_t agentId);
-        Agent* findAgentUnlocked(std::size_t agentId);
+        Agent* findAgentUnlocked(ClientId clientId, AgentId agentId);
+        Agent* findAgentUnlocked(AgentId agentId);
 
         template <typename F>
-        auto withAgent(std::size_t clientId, std::size_t agentId, F&& f);
+        auto withAgent(ClientId clientId, AgentId agentId, F&& f);
 
-        std::optional<InitPlacement> placeAgent(std::size_t clientId);
+        std::optional<InitPlacement> placeAgent(ClientId clientId);
 
         mutable std::mutex m_stateMutex;
         Matrix m_matrix;
-        // ClientId
-        std::unordered_map<std::size_t, std::vector<std::unique_ptr<Agent>>> m_agents;
+
+        std::unordered_map<ClientId, std::vector<std::unique_ptr<Agent>>> m_agents;
     };
 }

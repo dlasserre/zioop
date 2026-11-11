@@ -6,18 +6,19 @@
 #include <string>
 #include <cstddef>
 
+#include "Resource.hpp"
 #include "Types.hpp"
 
 namespace core {
 
     struct BaseEvent {
-        std::size_t agentId;
-        std::size_t clientId;
+        AgentId agentId;
+        ClientId clientId;
     };
 
     struct Message {
         BaseEvent base;
-        std::size_t speakerId;
+        AgentId speakerId;
         std::optional<Direction> direction;
         std::string message;
     };
@@ -31,6 +32,11 @@ namespace core {
         int level;
     };
 
-    using Event = std::variant<Message, Died, RitualCompleted>;
+    struct DeletedRottenResources {
+        BaseEvent base;
+        std::vector<ResourceType> resources;
+    };
+
+    using Event = std::variant<Message, Died, RitualCompleted, DeletedRottenResources>;
 
 }

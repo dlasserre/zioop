@@ -13,7 +13,6 @@ namespace core {
         Position position;
         std::size_t subCell;
         ResourceType type;
-        int rotting;
     };
 
     struct ItemInventory {
@@ -22,7 +21,8 @@ namespace core {
     };
 
     struct AgentSnapshot {
-        std::size_t agentId;
+        AgentId agentId;
+        ClientId teamId{0};
         int health;
         int level;
         Position position;
@@ -32,6 +32,8 @@ namespace core {
         bool ritual{false};
         std::optional<Direction> lookDirection;
         std::size_t lookCount{0};
+        std::optional<AgentId> attackTarget;
+        std::size_t attackCount{0};
     };
 
     struct MatrixSnapshot {

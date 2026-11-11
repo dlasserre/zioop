@@ -24,8 +24,16 @@ namespace core {
         DAMAGED
     };
 
+    enum class GiveResult {
+        GIVED,
+        RESOURCE_NOT_FOUND,
+        TARGET_NOT_FOUND,
+        CANT_GIVE_YOURSELF,
+        TARGET_TO_FAR
+    };
+
     struct DefaultResult {
-        std::size_t agentId;
+        AgentId agentId;
     } typedef TakeResult;
 
     struct ErrorResult {
@@ -35,18 +43,18 @@ namespace core {
 
     struct InvocationResult {
         DefaultResult base;
-        std::size_t spawnedAgentId;
+        AgentId spawnedAgentId;
         std::optional<Position> position;
     };
 
     struct ObservedResource {
         ResourceType type;
-        int rotting;
     };
 
     struct ObservedAgent {
-        std::size_t id;
+        AgentId id;
         int level;
+        int health;
     };
 
     struct ObservedCell {
@@ -80,7 +88,7 @@ namespace core {
 
     struct InventoryResult {
         DefaultResult base;
-        std::vector<InventoryResource> inventory;
+        std::vector<Inventory::InventoryResource> inventory;
     };
 
     struct RitualResult {
@@ -90,7 +98,13 @@ namespace core {
 
     struct AttackResponse {
         DefaultResult base;
-        std::size_t targetId;
+        AgentId targetId;
         bool killed;
+    };
+
+    struct GiveResponse {
+        DefaultResult base;
+        ResourceType resource;
+        AgentId targetAgentId;
     };
 }

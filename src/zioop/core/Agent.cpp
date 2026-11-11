@@ -1,65 +1,20 @@
 #include <utility>
-
-#include "zioop/core/Agent.hpp"
-
 #include <algorithm>
 #include <unordered_map>
 
-
 #include "zioop/core/Inventory.hpp"
 #include "zioop/core/Matrix.hpp"
+#include "zioop/core/Agent.hpp"
 
 namespace core {
+    constexpr int DAMAGE = 2;
+
     namespace {
-        std::size_t nextAgentId = 1;
+        std::uint64_t nextAgentId = 1;
     }
 
-    Agent::Agent()
-        : m_id(nextAgentId++) {
-    }
-
-    bool Agent::consumeRequiredResourcesForLevel() {
-
-        const auto it = std::ranges::find_if(
-            m_requiredResources.begin(),
-            m_requiredResources.end(),
-            [&](const LevelResources &entry) {
-                return entry.level == m_level;
-            }
-        );
-
-        if (it == m_requiredResources.end()) {
-            return false;
-        }
-
-        for (const auto &[type, requiredCount]: it->resources) {
-            const auto available = std::ranges::count_if(
-                m_inventory.begin(),
-                m_inventory.end(),
-                [type](const auto &item) {
-                    return item->getType() == type;
-                }
-            );
-
-            if (static_cast<std::size_t>(available) < requiredCount) {
-                return false;
-            }
-        }
-
-        for (const auto &[type, requiredCount]: it->resources) {
-            std::size_t remaining = requiredCount;
-
-            for (auto item = m_inventory.begin(); item != m_inventory.end() && remaining > 0;) {
-                if ((*item)->getType() == type) {
-                    item = m_inventory.erase(item);
-                    --remaining;
-                } else {
-                    ++item;
-                }
-            }
-        }
-
-        return true;
+    Agent::Agent(const ClientId clientId)
+        : m_clientId(clientId), m_id(AgentId{nextAgentId++}) {
     }
 
     bool Agent::startRitual(
@@ -69,8 +24,11 @@ namespace core {
         if (isRitualInProgress()) {
             return false;
         }
-
-        if (!consumeRequiredResourcesForLevel()) {
+        const auto index = static_cast<std::size_t>(getLevel() - 1);
+        if (
+            index >= RITUAL_REQUIREMENTS.size() ||
+            !m_inventory.remove(RITUAL_REQUIREMENTS[index])
+        ) {
             return false;
         }
 
@@ -80,6 +38,38 @@ namespace core {
         };
 
         return true;
+    }
+
+    AttackResult Agent::attack(Agent* target) {
+        if (!target) {
+            return AttackResult::TARGET_NOT_FOUND;
+        }
+
+        if (isRitualInProgress() || target->isRitualInProgress()) {
+            return AttackResult::RITUAL_IN_PROGRESS;
+        }
+
+        if (getClientId() == target->getClientId()) {
+            return AttackResult::SAME_OWNER;
+        }
+
+        if (!getCell() || getCell() != target->getCell()) {
+            return AttackResult::TOO_FAR;
+        }
+
+        if (getLevel() < target->getLevel()) {
+            return AttackResult::TARGET_TOO_STRONG;
+        }
+
+        if (target->killed()) {
+            return AttackResult::TARGET_NOT_FOUND;
+        }
+
+        m_attackTarget = target->getId();
+        ++m_attackCount;
+        target->damage(getLevel() * DAMAGE);
+
+        return target->killed() ? AttackResult::KILLED : AttackResult::DAMAGED;
     }
 
     bool Agent::completeRitual(const std::chrono::steady_clock::time_point now) {
@@ -93,10 +83,10 @@ namespace core {
     }
 
     bool Agent::damage(const int damage) {
-        if (!m_alive) {
+        if (killed()) {
             return false;
         }
-        m_health -= m_health - damage < 0 ? 0 : damage;
+        m_health = std::max(0, m_health - damage);
         return true;
     }
 
@@ -109,39 +99,32 @@ namespace core {
             return false;
         }
 
-        auto resource = m_cell->take(*this, type);
+        const auto resource = m_cell->take(*this, type);
 
         if (!resource) {
             return false;
         }
 
-        m_inventory.push_back(
-            std::move(resource)
-        );
+        m_inventory.add(*resource, Inventory::Clock::now());
+
         return true;
     }
 
-    std::vector<InventoryResource> Agent::getInventory() const {
-        std::unordered_map<ResourceType, std::size_t> count;
-        for (const auto &resource: m_inventory) {
-            ++count[resource->getType()];
-        }
-        std::vector<InventoryResource> inventory;
-        inventory.reserve(count.size());
-        for (const auto &[type, quantity]: count) {
-            inventory.push_back({
+    std::vector<Inventory::InventoryResource> Agent::getItems() const {
+        std::vector<Inventory::InventoryResource> result;
+
+        for (const auto &[type, quantity]: m_inventory.getItems()) {
+            result.push_back({
                 .type = type,
                 .quantity = quantity
             });
         }
 
-        return inventory;
+        return result;
     }
 
-    void Agent::updateInventory() const {
-        for (const auto &resource: m_inventory) {
-            resource->startRotting();
-        }
+    Inventory &Agent::getInventory() {
+        return m_inventory;
     }
 
     std::optional<Position> Agent::move(
@@ -168,7 +151,7 @@ namespace core {
             m_level
         );
 
-        LookResult result;
+        LookResult result{};
 
         for (const auto &position: positions) {
             const auto *cell = matrix.getCell(position);
@@ -185,8 +168,7 @@ namespace core {
 
             for (const auto &resource: cell->getResources()) {
                 observed.resources.push_back({
-                    .type = resource.type,
-                    .rotting = resource.rotting
+                    .type = resource.type
                 });
             }
 
@@ -196,7 +178,8 @@ namespace core {
                 }
                 observed.agents.push_back({
                     .id = agent->getId(),
-                    .level = agent->getLevel()
+                    .level = agent->getLevel(),
+                    .health = agent->getHealth()
                 });
             }
 
