@@ -1,20 +1,18 @@
-#include "zioop/core/Matrix.hpp"
-
 #include <iostream>
 #include <optional>
 #include <random>
 #include <stdexcept>
 #include <vector>
 
-namespace core {
-    static std::mt19937 generator(std::random_device{}());
+#include "zioop/core/Matrix.hpp"
 
-    constexpr std::array types{
-        ResourceType::APPLE,
-        ResourceType::CAKE,
-        ResourceType::MAGIC_WATER,
-        ResourceType::MEAT
-    };
+namespace core {
+
+    inline std::mt19937 getEngine() {
+        static std::random_device rd;
+        static std::mt19937 gen(rd());
+        return gen;
+    }
 
     Matrix::Matrix(
         const std::size_t sizeX,
@@ -35,41 +33,19 @@ namespace core {
                 "Matrix dimensions must be greater than 0"
             );
         }
-
-        std::uniform_int_distribution quantity(0, 3);
-        std::uniform_int_distribution<std::size_t> chooseType(0, types.size() - 1);
-
         m_cells.reserve(m_sizeX);
-
         for (std::size_t x = 0; x < m_sizeX; ++x) {
             std::vector<std::unique_ptr<Cell> > row;
             row.reserve(m_sizeY);
-
             for (std::size_t y = 0; y < m_sizeY; ++y) {
                 auto cell = std::make_unique<Cell>();
-
                 cell->setPosition({
                     .x = x,
                     .y = y
                 });
-
-                const int count = quantity(generator);
-                for (int i = 0; i < count; ++i) {
-                    cell->addResource(types[chooseType(generator)]);
-                }
-
                 row.push_back(std::move(cell));
             }
-
             m_cells.push_back(std::move(row));
-        }
-    }
-
-    void Matrix::updateResources() const {
-        for (auto &column: m_cells) {
-            for (auto &cell: column) {
-                cell->updateResources();
-            }
         }
     }
 
@@ -109,7 +85,6 @@ namespace core {
         ) {
             return std::nullopt;
         }
-        // cast to signed int64
         origin.x = static_cast<std::size_t>(x);
         origin.y = static_cast<std::size_t>(y);
 
@@ -222,12 +197,13 @@ namespace core {
         source.remove(agent);
         agent.setCell(&destination);
 
-        std::cout
-                << "Agent=" << agent.getId()
-                << " from (" << x << ", " << y << ")"
-                << " to (" << target->x << ", " << target->y << ")"
-                << " direction (" << static_cast<std::size_t>(direction) << ")"
-                << std::endl;
+        std::cout << std::format(
+            "Agent={} from=(x:{}, y:{}) to=(x:{}, y:{}) direction={}",
+            static_cast<std::size_t>(agent.getId()),
+            x, y,
+            target->x, target->y,
+            static_cast<std::size_t>(direction)
+        );
 
         return target;
     }
@@ -235,8 +211,7 @@ namespace core {
     Cell *Matrix::getFreeCell() const {
         Cell *selected = nullptr;
         int freeCount = 0;
-        std::random_device rd;
-        std::mt19937 gen(rd());
+        auto gen = getEngine();
 
         for (const auto &row: m_cells) {
             for (const auto &cell: row) {
@@ -253,7 +228,15 @@ namespace core {
         return selected;
     }
 
-    void Matrix::removeAgent(Agent &agent) const {
+    void Matrix::repop(const Clock::time_point now) {
+        for (const auto &row: m_cells) {
+            for (const auto &cell: row) {
+                cell->repop(now);
+            }
+        }
+    }
+
+    void Matrix::removeAgent(Agent &agent) {
         if (const Cell *cell = agent.getCell()) {
             const auto &[x, y] = cell->getPosition();
             Cell &source = *m_cells[x][y];
@@ -264,7 +247,7 @@ namespace core {
 
     std::optional<Position> Matrix::addAgent(
         Agent &agent
-    ) const {
+    ) {
         const auto cell = getFreeCell();
         if (!cell) {
             return std::nullopt;

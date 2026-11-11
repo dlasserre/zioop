@@ -4,6 +4,7 @@ set(ZIOOP_CORE_SOURCES
         Agent.cpp
         Resource.cpp
         Game.cpp
+        Inventory.cpp
 )
 
 file(GLOB_RECURSE ZIOOP_CORE_HEADERS CONFIGURE_DEPENDS

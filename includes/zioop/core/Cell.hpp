@@ -1,85 +1,69 @@
 #pragma once
 
+#include <vector>
+#include <array>
+#include <memory>
+#include <optional>
+
 #include "zioop/core/Resource.hpp"
 #include "zioop/core/Types.hpp"
 
-#include <vector>
-#include <array>
-#include <condition_variable>
-#include <memory>
-#include <thread>
-#include <iostream>
-#include <mutex>
-#include <optional>
-
 namespace core {
-    constexpr unsigned int MAX_AGENTS_PER_CELL = 4;
+    constexpr unsigned int MAX_AGENTS_PER_CELL  = 4;
+    constexpr int MAX_RESOURCES_PER_CELL        = 4;
+    constexpr std::chrono::seconds REPOP_TIME(10);
 
     class Agent;
 
     struct CellResource {
         std::size_t subCell;
         ResourceType type;
-        int rotting;
     };
 
     class Cell {
     public:
 
+        using Clock = std::chrono::steady_clock;
+
         explicit Cell();
 
-        Cell(const Cell&) = delete;
-        Cell& operator=(const Cell&) = delete;
+        [[nodiscard]] bool isFull() const;
 
-        Cell(Cell&& other) noexcept;
-        Cell& operator=(Cell&& other) noexcept;
+        [[nodiscard]] bool empty() const;
 
-        ~Cell();
+        [[nodiscard]] std::size_t countResources() const;
 
-        [[nodiscard]]
-        bool isFull() const;
+        [[nodiscard]] bool contains(const Agent &agent);
 
-        [[nodiscard]]
-        bool empty() const;
+        [[nodiscard]] std::vector<CellResource> getResources() const;
+
+        [[nodiscard]] std::unique_ptr<Resource> take(Agent &agent, ResourceType type);
+
+        [[nodiscard]] std::optional<std::size_t> getSubCell(const Agent &agent) const;
 
         bool emplace(Agent &agent);
 
         bool remove(const Agent &agent);
+
+        void addResource(ResourceType type);
+
+        void repop(Clock::time_point now);
 
         [[nodiscard]]
         Position getPosition() const {
             return {.x = m_pos.x, .y = m_pos.y};
         }
 
-        void addResource(ResourceType type);
-
-        std::optional<std::size_t> getSubCell(const Agent &agent) const;
-
-        void setPosition(const Position position) {
-            this->m_pos = position;
-        }
-
-        [[nodiscard]]
-        bool contains(const Agent &agent);
-
-        [[nodiscard]]
-        std::vector<CellResource> getResources() const;
-
-        [[nodiscard]]
-        std::unique_ptr<Resource> take(Agent &agent, ResourceType type);
-
         [[nodiscard]]
         const std::array<Agent *, MAX_AGENTS_PER_CELL>& getAgents() const {
             return agents;
         }
 
-        void updateResources() const;
+        void setPosition(const Position position) {
+            this->m_pos = position;
+        }
 
     private:
-
-        void pushResource(ResourceType type);
-        bool hasResources() const;
-        void repopLoop();
 
         struct Item {
             ResourceType type;
@@ -88,12 +72,11 @@ namespace core {
 
         std::array<Agent *, MAX_AGENTS_PER_CELL> agents{};
         Position m_pos{};
-        std::array<std::vector<std::unique_ptr<Resource>>, MAX_AGENTS_PER_CELL> m_resources{};
+        std::array<std::vector<std::unique_ptr<Resource>>, MAX_RESOURCES_PER_CELL> m_resources{};
         std::vector<std::unique_ptr<Resource>> m_inventory{};
-        mutable std::mutex m_mutex;
-        std::condition_variable m_cv;
-        std::thread m_repopThread;
-        bool m_running{true};
-        const std::size_t m_maxResources{4};
+        Clock::time_point m_nextRepop;
+
+        void pushResource(ResourceType type);
+        [[nodiscard]] bool hasResources() const;
     };
 }

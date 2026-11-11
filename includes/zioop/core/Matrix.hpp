@@ -23,23 +23,23 @@ namespace core {
 
     constexpr Offset getOffset(const Direction direction) {
         switch (direction) {
-            case Direction::NORTH: return {0, -1};
-            case Direction::SOUTH: return {0, 1};
-            case Direction::EAST: return {1, 0};
-            case Direction::WEST: return {-1, 0};
+            case Direction::NORTH: return {.x = 0, .y = -1};
+            case Direction::SOUTH: return {.x = 0, .y = 1};
+            case Direction::EAST: return {.x = 1, .y = 0};
+            case Direction::WEST: return {.x = -1, .y = 0};
         }
-        return {0, 0};
+        return {.x = 0, .y = 0};
     }
 
     class Matrix {
     public:
+        using Clock = std::chrono::steady_clock;
+
         explicit Matrix(std::size_t sizeX, std::size_t sizeY);
 
-        std::optional<Position> addAgent(Agent &agent) const;
+        std::optional<Position> addAgent(Agent &agent);
 
-        void removeAgent(Agent &agent) const;
-
-        void updateResources() const;
+        void removeAgent(Agent &agent);
 
         [[nodiscard]]
         std::optional<Position> getNeighborPosition(
@@ -85,14 +85,12 @@ namespace core {
             Offset offset
         ) const;
 
+        void repop(Clock::time_point now);
+
     private:
         std::size_t m_sizeX;
         std::size_t m_sizeY;
-
-    public:
-        const std::array<Position, 4> angles;
-
-    private:
         std::vector<std::vector<std::unique_ptr<Cell>>> m_cells;
+        const std::array<Position, 4> angles;
     };
 }

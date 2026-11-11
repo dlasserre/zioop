@@ -1,12 +1,12 @@
-#include "zioop/core/Cell.hpp"
-#include "zioop/core/Fruit.hpp"
-
 #include <algorithm>
 #include <random>
 
+#include "zioop/core/Cell.hpp"
+#include "zioop/core/Fruit.hpp"
 #include "zioop/core/Agent.hpp"
 
 namespace core {
+
     namespace {
 
         ResourceType getRandomResource() {
@@ -16,13 +16,13 @@ namespace core {
             };
 
             static const std::vector<Item> resources = {
-                {ResourceType::APPLE, 50.0f},
-                {ResourceType::MAGIC_WATER, 20.0f},
-                {ResourceType::CAKE, 20.0f},
-                {ResourceType::MEAT, 10.0f},
+                {.type = ResourceType::APPLE, .weight = 50.0f},
+                {.type = ResourceType::MAGIC_WATER, .weight = 20.0f},
+                {.type = ResourceType::CAKE, .weight = 20.0f},
+                {.type = ResourceType::MEAT, .weight = 10.0f},
             };
 
-            static std::discrete_distribution<size_t> dist = []() {
+            static std::discrete_distribution<size_t> dist = [] {
                 std::vector<double> weights;
                 weights.reserve(resources.size());
                 for (const auto&[_, weight] : resources) {
@@ -31,59 +31,25 @@ namespace core {
                 return std::discrete_distribution<size_t>(weights.begin(), weights.end());
             }();
 
-            static std::random_device rd;
-            static std::mt19937 gen(rd());
+            static std::mt19937 gen(std::random_device{}());
 
             return resources[dist(gen)].type;
         }
     }
 
     Cell::Cell() {
-        m_repopThread = std::thread(&Cell::repopLoop, this);
+        for (int i = 0; i < MAX_RESOURCES_PER_CELL; ++i) {
+            addResource(getRandomResource());
+            m_nextRepop = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        }
     }
 
-    Cell::Cell(Cell&& other) noexcept {
-        std::lock_guard<std::mutex> lock(other.m_mutex);
-        m_pos = other.m_pos;
-        m_resources = std::move(other.m_resources);
-        m_inventory = std::move(other.m_inventory);
-        agents = other.agents;
-        m_running = other.m_running;
-        m_repopThread = std::move(other.m_repopThread);
-    }
-
-    Cell& Cell::operator=(Cell&& other) noexcept {
-        if (this != &other) {
-            {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                m_running = false;
-            }
-            m_cv.notify_one();
-            if (m_repopThread.joinable()) {
-                m_repopThread.join();
-            }
-            std::lock_guard<std::mutex> lock(other.m_mutex);
-            m_pos = other.m_pos;
-            m_resources = std::move(other.m_resources);
-            m_inventory = std::move(other.m_inventory);
-            agents = other.agents;
-            m_running = other.m_running;
-            m_repopThread = std::move(other.m_repopThread);
+    std::size_t Cell::countResources() const {
+        std::size_t count = 0;
+        for (const auto &resources: m_resources) {
+            count += static_cast<int>(resources.size());
         }
-        return *this;
-    }
-
-    Cell::~Cell() {
-        {
-            std::lock_guard<std::mutex> lock_guard(m_mutex);
-            m_running = false;
-        }
-
-        m_cv.notify_one();
-
-        if (m_repopThread.joinable()) {
-            m_repopThread.join();
-        }
+        return count;
     }
 
     bool Cell::hasResources() const {
@@ -110,26 +76,7 @@ namespace core {
     }
 
     void Cell::addResource(const ResourceType type) {
-        std::lock_guard<std::mutex> lock(m_mutex);
         pushResource(type);
-    }
-
-
-    void Cell::repopLoop() {
-        while (true) {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            m_cv.wait(lock, [this] {
-                return !hasResources() || !m_running;
-            });
-
-            if (!m_running) {
-                break;
-            }
-
-            for (size_t i = 0; i < m_maxResources; ++i) {
-                pushResource(getRandomResource());
-            }
-        }
     }
 
     bool Cell::emplace(Agent &agent) {
@@ -173,8 +120,14 @@ namespace core {
         return false;
     }
 
+    void Cell::repop(const Clock::time_point now) {
+        if (now >= m_nextRepop && countResources() < MAX_RESOURCES_PER_CELL) {
+            pushResource(getRandomResource());
+            m_nextRepop = now + REPOP_TIME;
+        }
+    }
+
     std::unique_ptr<Resource> Cell::take(Agent& agent, ResourceType type) {
-        std::lock_guard<std::mutex> lock(m_mutex);
         const auto current = getSubCell(agent);
         if (!current) {
             return nullptr;
@@ -187,7 +140,7 @@ namespace core {
             }
             auto &pile = m_resources[target];
             const auto it = std::ranges::find_if(pile, [type](const auto &item) {
-               return item->getType() == type;
+               return item->type() == type;
             });
             if (it == pile.end()) {
                 continue;
@@ -197,7 +150,7 @@ namespace core {
 
             auto resource = std::move(*it);
             pile.erase(it);
-            m_cv.notify_one();
+            m_nextRepop = Clock::now() + REPOP_TIME;
 
             return resource;
         }
@@ -206,27 +159,17 @@ namespace core {
     }
 
     std::vector<CellResource> Cell::getResources() const {
-        std::lock_guard<std::mutex> lock(m_mutex);
         std::vector<CellResource> result;
+
         for (std::size_t subCell = 0; subCell < m_resources.size(); ++subCell) {
             for (const auto &resource: m_resources[subCell]) {
                 result.push_back({
                     .subCell = subCell,
-                    .type = resource->getType(),
-                    .rotting = resource->getRotting()
+                    .type = resource->type()
                 });
             }
         }
         return result;
-    }
-
-    void Cell::updateResources() const {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        for (const auto &pile: m_resources) {
-            for (const auto &resource: pile) {
-                resource->startRotting();
-            }
-        }
     }
 
 }
