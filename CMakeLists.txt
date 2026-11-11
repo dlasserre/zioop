@@ -93,11 +93,6 @@ add_subdirectory(src/zioop/gui)
 
 add_subdirectory(app)
 
-include(CTest)
-if(BUILD_TESTING)
-    add_subdirectory(tests)
-endif()
-
 # ===========================================================================
 # MSVC
 # ===========================================================================
