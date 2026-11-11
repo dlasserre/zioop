@@ -55,6 +55,9 @@ namespace gui {
                 agent.actionCount = readUnsigned(entry.at("actionCount"));
             }
             agent.health = entry.at("health").get<int>();
+            if (entry.contains("teamId")) {
+                agent.teamId = readUnsigned(entry.at("teamId"));
+            }
             if (entry.contains("level")) {
                 agent.level = readUnsigned(entry.at("level"));
             }
@@ -65,6 +68,10 @@ namespace gui {
             if (const auto look = entry.find("look"); look != entry.end() && look->is_object()) {
                 agent.lookDirection = look->at("direction").get<int>();
                 agent.lookCount = readUnsigned(look->at("count"));
+            }
+            if (const auto attack = entry.find("attack"); attack != entry.end() && attack->is_object()) {
+                agent.attackTarget = readUnsigned(attack->at("targetId"));
+                agent.attackCount = readUnsigned(attack->at("count"));
             }
             if (const auto message = entry.find("message");
                 message != entry.end() && message->is_string()) {
@@ -110,7 +117,6 @@ namespace gui {
 
             snapshot.resources.push_back({
                 .type = entry.at("type").get<int>(),
-                .rotting = entry.at("rotting").get<int>(),
                 .position = {
                     (static_cast<float>(x) + offset.x) * zioop::CELL_SIZE,
                     0.12f,

@@ -51,6 +51,7 @@ namespace gui {
             int                 walkAnimation{-1};
             int                 idleAnimation{-1};
             int                 attackAnimation{-1};
+            int                 hitAnimation{-1};
             int                 takeAnimation{-1};
             int                 ritualAnimation{-1};
             int                 levelUpAnimation{-1};
@@ -79,6 +80,7 @@ namespace gui {
             float burst{0.0f};
 
             std::size_t lookCount{0};
+            std::size_t attackCount{0};
             float lookTime{-1.0f};
             Vector3 lookDirection{0.0f, 0.0f, -1.0f};
         };

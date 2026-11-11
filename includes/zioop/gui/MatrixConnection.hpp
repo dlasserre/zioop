@@ -34,17 +34,19 @@ namespace gui {
             std::string action{};
             std::size_t actionCount{};
             std::size_t level{};
+            std::size_t teamId{};
             int health{};
             std::vector<InventoryItem> inventory;
             bool ritual{false};
             std::string message{};
             std::optional<int> lookDirection{};
             std::size_t lookCount{};
+            std::optional<std::size_t> attackTarget{};
+            std::size_t attackCount{};
         };
 
         struct ResourceView {
             int type{};
-            int rotting{};
             Vector3 position{};
         };
 

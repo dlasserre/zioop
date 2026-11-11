@@ -3,6 +3,7 @@
 
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <limits>
 #include <format>
 #include <iostream>
@@ -47,6 +48,10 @@ namespace gui {
 
     static Color AgentColor(const std::size_t id) {
         return ColorFromHSV(static_cast<float>((id % 12) * 30), 0.7f, 0.8f);
+    }
+
+    static Color TeamColor(const std::size_t team) {
+        return ColorFromHSV(std::fmod(static_cast<float>(team) * 137.508f, 360.0f), 0.75f, 0.85f);
     }
 
     namespace ui {
@@ -218,6 +223,7 @@ namespace gui {
         mesh.walkAnimation = FindAnimation(mesh, "Walk");
         mesh.idleAnimation = FindAnimation(mesh, "Idle");
         mesh.attackAnimation = FindAnimation(mesh, "Bite_Front");
+        mesh.hitAnimation = FindAnimation(mesh, "HitRecieve");
         mesh.takeAnimation = FindAnimation(mesh, "Bite_InPlace");
         mesh.ritualAnimation = FindAnimation(mesh, "Dance");
         mesh.levelUpAnimation = FindAnimation(mesh, "Jump");
@@ -243,6 +249,14 @@ namespace gui {
     }
 
     // Joue une animation une seule fois ; la relance si elle est déjà en cours.
+    static void Face(Renderer::AgentMotion &motion, const Vector3 from, const Vector3 to) {
+        const float dx = to.x - from.x;
+        const float dz = to.z - from.z;
+        if (dx != 0.0f || dz != 0.0f) {
+            motion.rotation = std::atan2(dx, dz) * RAD2DEG;
+        }
+    }
+
     static void PlayOnce(Renderer::AgentMotion &motion, const int animation) {
         if (animation < 0) {
             return;
@@ -376,7 +390,7 @@ namespace gui {
                     motion ? motion->current : agent.position;
             visualPosition.y = m_terrain.heightAt(visualPosition.x, visualPosition.z);
 
-            const Color color = AgentColor(id);
+            const Color color = TeamColor(agent.teamId);
 
             if (colorPass) {
                 const Vector3 ring{visualPosition.x, visualPosition.y + 0.004f, visualPosition.z};
@@ -1244,6 +1258,7 @@ namespace gui {
 
                 // Cases où un agent vient d'attaquer : ceux qui y disparaissent sont morts.
                 std::set<std::pair<std::size_t, std::size_t> > attackCells;
+                std::vector<std::pair<std::size_t, std::size_t>> attacks;
 
                 for (const auto &[id, agent]: snapshot.agents) {
                     auto [it, inserted] = m_agentMotions.try_emplace(id);
@@ -1256,6 +1271,7 @@ namespace gui {
                         motion.current = agent.position;
                         // Ne pas rejouer une action faite avant l'arrivée de la GUI.
                         motion.actionCount = agent.actionCount;
+                        motion.attackCount = agent.attackCount;
                     } else {
                         const auto &target = agent.position;
                         const bool move =
@@ -1284,6 +1300,12 @@ namespace gui {
                             PlayOnce(motion, ActionAnimation(m_agentModel, agent.action));
                         }
 
+                        if (agent.attackTarget && agent.attackCount != motion.attackCount) {
+                            motion.attackCount = agent.attackCount;
+                            attackCells.insert({agent.x, agent.y});
+                            attacks.emplace_back(id, *agent.attackTarget);
+                        }
+
                         // Niveau connu qui augmente : fin du rituel.
                         if (motion.level > 0 && agent.level > motion.level) {
                             PlayOnce(motion, m_agentModel.levelUpAnimation);
@@ -1301,6 +1323,19 @@ namespace gui {
                         motion.lookTime = 0.0f;
                         motion.rotation = std::atan2(motion.lookDirection.x, motion.lookDirection.z) * RAD2DEG;
                     }
+                }
+
+                for (const auto &[attackerId, targetId]: attacks) {
+                    auto &attacker = m_agentMotions.at(attackerId);
+                    const auto victim = m_agentMotions.find(targetId);
+                    if (victim == m_agentMotions.end()) {
+                        PlayOnce(attacker, m_agentModel.attackAnimation);
+                        continue;
+                    }
+                    Face(attacker, attacker.target, victim->second.target);
+                    Face(victim->second, victim->second.target, attacker.target);
+                    PlayOnce(attacker, m_agentModel.attackAnimation);
+                    PlayOnce(victim->second, m_agentModel.hitAnimation);
                 }
 
                 constexpr std::size_t MaxCorpses = 64;
