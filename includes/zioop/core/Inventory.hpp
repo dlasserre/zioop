@@ -4,16 +4,18 @@
 #include <unordered_map>
 
 #include "zioop/core/Resource.hpp"
+#include "zioop/core/Results.hpp"
 
 namespace core {
+
+    struct InventoryResource {
+        ResourceType type;
+        std::size_t quantity;
+    };
+
     class Inventory {
     public:
         using Clock = std::chrono::steady_clock;
-
-        struct InventoryResource {
-            ResourceType type;
-            std::size_t quantity;
-        };
 
         struct Item {
             std::size_t count{0};
@@ -25,9 +27,9 @@ namespace core {
 
         bool remove(const ResourceCount &required);
 
-        bool give(ResourceType type, Inventory &target);
-
         void received(Resource resource);
+
+        [[nodiscard]] GiveStatus give(ResourceType type, Inventory &target);
 
         [[nodiscard]] std::vector<ResourceType> update(Clock::time_point now);
 

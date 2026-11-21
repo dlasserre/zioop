@@ -1,11 +1,8 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
-
 #include "zioop/core/Event.hpp"
-#include "zioop/core/Inventory.hpp"
 #include "zioop/core/Results.hpp"
-#include "zioop/core/MatrixSnapshot.hpp"
 
 namespace network {
 
@@ -38,6 +35,9 @@ namespace network {
 
     [[nodiscard]]
     nlohmann::json serializeError(const core::ErrorResult &error);
+
+    [[nodiscard]]
+    nlohmann::json serializeHeal(const core::HealResult &heal);
 
     [[nodiscard]]
     nlohmann::json serializeInvocation(const core::InvocationResult &invocation);

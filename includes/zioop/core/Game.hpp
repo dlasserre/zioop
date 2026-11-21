@@ -7,10 +7,11 @@
 #include <optional>
 #include <unordered_map>
 #include <array>
-#include <cstddef>
+#include <expected>
 
-#include "Event.hpp"
-#include "Inventory.hpp"
+#include "Error.hpp"
+#include "zioop/core/Event.hpp"
+#include "zioop/core/Inventory.hpp"
 #include "zioop/core/Matrix.hpp"
 #include "zioop/core/Agent.hpp"
 #include "zioop/core/Results.hpp"
@@ -30,6 +31,25 @@ namespace core {
         }
     };
 
+    enum class GameCommand { MOVE, LOOK, TAKE, INVENTORY, RITUAL, ATTACK, INVOCATION, BROADCAST, GIVE, HEAL };
+
+    constexpr std::chrono::milliseconds commandDuration(const GameCommand command) {
+        using namespace std::chrono_literals;
+        switch (command) {
+            case GameCommand::MOVE: return 700ms;
+            case GameCommand::HEAL:
+            case GameCommand::LOOK:
+            case GameCommand::TAKE:
+            case GameCommand::GIVE: return 300ms;
+            case GameCommand::ATTACK: return 500ms;
+            case GameCommand::BROADCAST: return 200ms;
+            case GameCommand::INVOCATION: return 1000ms;
+            case GameCommand::INVENTORY:
+            case GameCommand::RITUAL: return 0ms;
+        }
+        return 0ms;
+    }
+
     class Game {
     public:
         static constexpr std::chrono::seconds RitualTimePerLevel{30};
@@ -40,8 +60,8 @@ namespace core {
         };
 
         struct TakeResult {
-            bool taken;
-            std::vector<Inventory::InventoryResource> inventory;
+            bool taken{false};
+            std::vector<InventoryResource> inventory;
         };
 
         std::vector<Event> drainEvents();
@@ -51,45 +71,52 @@ namespace core {
         void tick(std::chrono::steady_clock::time_point now);
 
         [[nodiscard]]
-        std::optional<InitPlacement> initClient(
+        std::expected<InitPlacement, Error> initClient(
             ClientId clientId
         );
 
-        std::optional<InvocationResult> instanciatAgent(
+        std::expected<InvocationResult, Error> instanciatAgent(
             ClientId clientId,
             AgentId agentId
         );
 
         [[nodiscard]]
-        std::optional<MoveResult> move(
+        std::expected<MoveResult, Error> move(
             ClientId clientId,
             AgentId agentId,
             Direction direction
         );
 
         [[nodiscard]]
-        std::optional<BroadcastResult> broadcast(
+        std::optional<std::chrono::steady_clock::time_point> reserve(
             ClientId clientId,
             AgentId agentId,
-            std::string &message
+            GameCommand command
         );
 
         [[nodiscard]]
-        std::optional<LookResult> look(
+        std::expected<BroadcastResult, Error> broadcast(
+            ClientId clientId,
+            AgentId agentId,
+            const std::string &message
+        );
+
+        [[nodiscard]]
+        std::expected<LookResult, Error> look(
             ClientId clientId,
             AgentId agentId,
             Direction direction
         );
 
         [[nodiscard]]
-        std::optional<TakeResult> take(
+        std::expected<TakenResult, Error> take(
             ClientId clientId,
             AgentId agentId,
             ResourceType type
         );
 
         [[nodiscard]]
-        std::optional<GiveResult> give(
+        std::expected<GiveResult, Error> give(
             ClientId clientId,
             AgentId agentId,
             ResourceType type,
@@ -97,23 +124,31 @@ namespace core {
         );
 
         [[nodiscard]]
-        std::optional<InventoryResult> inventory(
+        InventoryResult inventory(
             ClientId clientId,
             AgentId agentId
         );
 
         [[nodiscard]]
-        std::optional<RitualResult> ritual(
+        std::expected<RitualResult, Error> ritual(
             ClientId clientId,
             AgentId agentId
         );
 
         [[nodiscard]]
-        std::optional<AttackResult> attack(
+        std::expected<AttackResult, Error> attack(
             ClientId clientId,
             AgentId agentId,
             AgentId targetId
         );
+
+        [[nodiscard]]
+        std::expected<HealResult, Error> heal(
+            ClientId clientId,
+            AgentId agentId
+        );
+
+        std::optional<ClientId> getAgentClientId(AgentId agentId);
 
         MatrixSnapshot getMatrix() const;
 
@@ -122,9 +157,10 @@ namespace core {
         [[nodiscard]] std::size_t countMonsters(ClientId clientId);
     private:
 
-        int  m_test{0};
-
-
+        struct AgentEntry {
+            ClientId clientId;
+            Agent* agent;
+        };
 
         void emitUnlocked(Event event);
 
@@ -144,5 +180,6 @@ namespace core {
         Matrix m_matrix;
 
         std::unordered_map<ClientId, std::vector<std::unique_ptr<Agent>>> m_agents;
+        std::unordered_map<AgentId, AgentEntry> m_agentIndex;
     };
 }

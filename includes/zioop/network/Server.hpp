@@ -15,10 +15,11 @@
 #include <winsock2.h>
 
 namespace network {
+    constexpr int MAX_MESSAGE_SIZE{255};
 
     struct Request {
-        core::AgentId agentId;
-        core::ClientId clientId;
+        core::AgentId agentId{0};
+        core::ClientId clientId{0};
         nlohmann::json body;
     };
 

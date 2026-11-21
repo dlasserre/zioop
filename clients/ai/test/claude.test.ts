@@ -1,115 +1,87 @@
 import assert from "node:assert/strict";
-import { test, type TestContext } from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import type { SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
-import { claudeOptions, createClaudeBrain, type ClaudeQueryFactory } from "../src/claude-brain.js";
-import { parseDecision } from "../src/commands.js";
+import { test } from "node:test";
+import type Anthropic from "@anthropic-ai/sdk";
+import { claudeRequest, createClaudeBrain, readDecision, readUsage, type ClaudeRequest } from "../src/claude-brain.js";
+import { GAME_INSTRUCTIONS, parseDecision } from "../src/commands.js";
+import { cost, Meter } from "../src/metrics.js";
+import { resolveModel } from "../src/models.js";
 
-async function directory(t: TestContext): Promise<string> {
-  const path = await mkdtemp(join(tmpdir(), "zioop-claude-test-"));
-  t.after(() => rm(path, { recursive: true, force: true }));
-  return path;
+const decision = { plan: [{ action: "MOVE", arg: "N" }], memory: "Nord riche", why: "Explorer" };
+
+function message(overrides: Partial<Anthropic.Beta.Messages.BetaMessage> = {}): Anthropic.Beta.Messages.BetaMessage {
+  return {
+    id: "msg_test",
+    type: "message",
+    role: "assistant",
+    model: "claude-haiku-5-5",
+    stop_reason: "end_turn",
+    stop_details: null,
+    content: [{ type: "text", text: JSON.stringify(decision) }],
+    usage: { input_tokens: 300, output_tokens: 80, cache_read_input_tokens: 900, cache_creation_input_tokens: 0, output_tokens_details: { thinking_tokens: 40 } },
+    ...overrides,
+  } as Anthropic.Beta.Messages.BetaMessage;
 }
 
-const action = { command: "INVENTORY", direction: null, target: null, historyBefore: null, historyLimit: null, reason: "Vérifier mes fruits", memory: "Position connue" };
-
-// Only SDK event fields consumed by the adapter are needed in these fixtures.
-function result(overrides: Partial<SDKResultMessage> = {}): SDKMessage {
-  return { type: "result", subtype: "success", is_error: false, session_id: "claude-session", structured_output: action, ...overrides } as SDKMessage;
-}
-
-test("Claude uses its API key and disables inherited tools and settings", () => {
-  const options = claudeOptions("test-anthropic-key", "/session", {
-    PATH: "runtime", OPENAI_API_KEY: "other-key", ANTHROPIC_AUTH_TOKEN: "personal-login", CLAUDE_CONFIG_DIR: "/personal", GITHUB_TOKEN: "private",
-  }, "chosen-model");
-  assert.equal(options.model, "chosen-model");
-  assert.equal(options.env?.ANTHROPIC_API_KEY, "test-anthropic-key");
-  assert.equal(options.env?.PATH, "runtime");
-  assert.equal(options.env?.CLAUDE_CONFIG_DIR, join("/session", "claude-home"));
-  assert.equal(options.env?.ANTHROPIC_AUTH_TOKEN, undefined);
-  assert.equal(options.env?.OPENAI_API_KEY, undefined);
-  assert.equal(options.env?.GITHUB_TOKEN, undefined);
-  assert.deepEqual(options.tools, []);
-  assert.deepEqual(options.settingSources, []);
-  assert.deepEqual(options.plugins, []);
-  assert.deepEqual(options.skills, []);
-  assert.deepEqual(options.mcpServers, {});
-  assert.equal(options.strictMcpConfig, true);
-  assert.equal(options.permissionMode, "dontAsk");
-  assert.equal(options.persistSession, true);
-  assert.equal(options.outputFormat?.type, "json_schema");
+test("each request is stateless with a cached system prompt and structured output", () => {
+  const request = claudeRequest(resolveModel("haiku"), "low", "pos=1,1");
+  assert.equal(request.model, "claude-haiku-5-5");
+  assert.deepEqual(request.messages, [{ role: "user", content: "pos=1,1" }]);
+  const system = request.system as Anthropic.Beta.Messages.BetaTextBlockParam[];
+  assert.equal(system[0]!.text, GAME_INSTRUCTIONS);
+  assert.deepEqual(system[0]!.cache_control, { type: "ephemeral" });
+  assert.equal(request.output_config?.effort, "low");
+  assert.equal(request.output_config?.format?.type, "json_schema");
+  assert.equal(request.fallbacks, undefined);
+  assert.equal(request.betas, undefined);
 });
 
-test("Claude resumes the same session and returns structured decisions", async (t) => {
-  const calls: Parameters<ClaudeQueryFactory>[0][] = [];
-  let closed = 0;
-  const factory: ClaudeQueryFactory = (args) => {
-    calls.push(args);
-    return {
-      async *[Symbol.asyncIterator]() { yield result(); },
-      close() { ++closed; },
-    };
-  };
-  const brain = await createClaudeBrain("test-key", await directory(t), undefined, factory);
-  const signal = new AbortController().signal;
-  assert.equal(brain.threadId, null);
-  assert.deepEqual(parseDecision(await brain.decide("premier contexte", signal)), action);
-  assert.equal(brain.threadId, "claude-session");
-  await brain.decide("résultat réel + historique", signal);
-  assert.equal(calls[0]!.options.resume, undefined);
-  assert.equal(calls[1]!.options.resume, "claude-session");
-  assert.equal(calls[1]!.prompt, "résultat réel + historique");
-  assert.equal(closed, 2);
-});
-
-test("Claude rejects API errors, missing JSON and exhausted structured retries", async (t) => {
-  const runDirectory = await directory(t);
-  const cases: [SDKMessage[], RegExp][] = [
-    [[result({ structured_output: undefined })], /no valid structured decision/],
-    [[result({ is_error: true, result: "API key rejected" })], /API key rejected/],
-    [[result({ subtype: "error_max_structured_output_retries", errors: ["Invalid JSON"] })], /Invalid JSON/],
-    [[], /without a decision/],
-  ];
-  for (const [messages, expected] of cases) {
-    let closed = false;
-    const factory: ClaudeQueryFactory = () => ({
-      async *[Symbol.asyncIterator]() { yield* messages; },
-      close() { closed = true; },
-    });
-    const brain = await createClaudeBrain("test-key", runDirectory, undefined, factory);
-    await assert.rejects(brain.decide("context", new AbortController().signal), expected);
-    assert.equal(closed, true);
+test("Opus, Sonnet and Fable opt into default refusal fallbacks", () => {
+  for (const alias of ["opus", "sonnet", "fable"]) {
+    const request = claudeRequest(resolveModel(alias), "medium", "x");
+    assert.equal(request.fallbacks, "default");
+    assert.deepEqual(request.betas, ["server-side-fallback-2026-07-01"]);
   }
 });
 
-test("Claude cancellation reaches the SDK and closes the running query", async (t) => {
-  let closed = false;
-  let started!: () => void;
-  const ready = new Promise<void>((resolve) => { started = resolve; });
-  const factory: ClaudeQueryFactory = ({ options }) => ({
-    async *[Symbol.asyncIterator]() {
-      const signal = options.abortController!.signal;
-      await new Promise<never>((_resolve, reject) => {
-        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-        started();
-      });
-    },
-    close() { closed = true; },
+test("Claude brain returns the decision and token usage", async () => {
+  const requests: ClaudeRequest[] = [];
+  const brain = createClaudeBrain("test-key", resolveModel("haiku"), "low", async (request) => {
+    requests.push(request);
+    return message();
   });
-  const brain = await createClaudeBrain("test-key", await directory(t), undefined, factory);
-  const controller = new AbortController();
-  const pending = brain.decide("context", controller.signal);
-  const rejected = assert.rejects(pending, /requested stop/);
-  await ready;
-  controller.abort(new Error("requested stop"));
-  await rejected;
-  assert.equal(closed, true);
+  const reply = await brain.decide("contexte", new AbortController().signal);
+  assert.deepEqual(parseDecision(reply.text).plan, [{ action: "MOVE", arg: "N" }]);
+  assert.deepEqual(reply.usage, { input: 300, output: 80, cacheRead: 900, cacheWrite: 0, thinking: 40 });
+  await brain.decide("contexte 2", new AbortController().signal);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1]!.messages.length, 1);
+  assert.equal(brain.model, "claude-haiku-5-5");
 });
 
-test("an already cancelled Claude decision never starts a query", async (t) => {
-  const factory: ClaudeQueryFactory = () => { throw new Error("Should not start"); };
-  const brain = await createClaudeBrain("test-key", await directory(t), undefined, factory);
+test("refusals, truncation and empty answers are rejected", () => {
+  assert.throws(() => readDecision(message({ stop_reason: "refusal", stop_details: { type: "refusal", category: "cyber", explanation: null } as Anthropic.Beta.Messages.BetaMessage["stop_details"] })), /refusé.*cyber/);
+  assert.throws(() => readDecision(message({ stop_reason: "max_tokens" })), /max_tokens/);
+  assert.throws(() => readDecision(message({ content: [] })), /aucune décision/);
+  assert.equal(readUsage(message({ usage: { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: null, cache_creation_input_tokens: null, output_tokens_details: null } as unknown as Anthropic.Beta.Messages.BetaUsage }).usage).cacheRead, 0);
+});
+
+test("an already cancelled decision never calls the API", async () => {
+  const brain = createClaudeBrain("test-key", resolveModel("opus"), "low", async () => { throw new Error("Should not start"); });
   await assert.rejects(brain.decide("context", AbortSignal.abort(new Error("already stopped"))), /already stopped/);
+});
+
+test("costs use per-model prices including cache reads and writes", () => {
+  const opus = resolveModel("opus").pricing;
+  assert.equal(cost({ input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0, thinking: 0 }, opus), 4);
+  assert.equal(cost({ input: 0, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 0, thinking: 0 }, opus), 20.2);
+  assert.equal(cost({ input: 1, output: 1, cacheRead: 1, cacheWrite: 1, thinking: 0 }, null), null);
+  const meter = new Meter(resolveModel("haiku").pricing);
+  meter.record({ input: 1000, output: 100, cacheRead: 2000, cacheWrite: 0, thinking: 0 }, 500, 800);
+  meter.countAction();
+  meter.countAction();
+  const summary = meter.summary();
+  assert.equal(summary.calls, 1);
+  assert.equal(summary.actions, 2);
+  assert.ok(Math.abs(summary.costUsd! - 0.00017) < 1e-9);
+  assert.match(meter.describe(), /2 actions/);
 });

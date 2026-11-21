@@ -890,7 +890,7 @@ namespace gui {
             const auto color = AgentColor(id);
             const auto name = std::format("Agent #{}", id);
             const auto level = std::format("Niv. {}", agent.level);
-            const auto health = std::format("{} PV", agent.health);
+            const auto health = std::format("{}/{} PV", agent.health, agent.maxHealth);
 
             struct InventoryEntry {
                 Texture2D icon;
@@ -945,7 +945,7 @@ namespace gui {
                               12, ui::Gold, Weight::SemiBold);
 
             y += headerHeight + rowGap;
-            const float ratio = std::clamp(static_cast<float>(agent.health) / 100.0f, 0.0f, 1.0f);
+            const float ratio = std::clamp(static_cast<float>(agent.health) / static_cast<float>(std::max(agent.maxHealth, 1)), 0.0f, 1.0f);
             const Vector2 healthSize = m_typography.measure(health, 12, Weight::Medium);
             const float barWidth = panel.width - padding * 2.0f - healthSize.x - 8.0f;
             const Rectangle bar{panel.x + padding, y, barWidth, barHeight};

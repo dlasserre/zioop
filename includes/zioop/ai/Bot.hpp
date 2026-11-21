@@ -68,6 +68,7 @@ namespace ai {
         virtual void broadcast(std::size_t agentId, const std::string &message) final;
         virtual void attack(std::size_t agentId, std::size_t targetId) final;
         virtual void give(std::size_t agentId, std::size_t targetId, int type) final;
+        virtual void heal(std::size_t agentId) final;
 
         [[nodiscard]]
         virtual bool isOwnAgent(std::size_t agentId) final;

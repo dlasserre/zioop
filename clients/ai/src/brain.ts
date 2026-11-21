@@ -2,11 +2,16 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Codex, type CodexOptions, type ThreadOptions } from "@openai/codex-sdk";
 import { decisionSchema, GAME_INSTRUCTIONS } from "./commands.js";
+import type { Usage } from "./metrics.js";
+import type { Pricing } from "./models.js";
+
+export type BrainReply = { text: string; usage: Usage | null };
 
 export interface Brain {
   readonly name: string;
-  readonly threadId: string | null;
-  decide(prompt: string, signal: AbortSignal): Promise<string>;
+  readonly model: string;
+  readonly pricing: Pricing | null;
+  decide(prompt: string, signal: AbortSignal): Promise<BrainReply>;
 }
 
 export function runtimeEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {
@@ -53,14 +58,21 @@ export async function createCodexBrain(apiKey: string, runDirectory: string, mod
   await mkdir(join(runDirectory, "context"), { recursive: true });
   await writeFile(join(runDirectory, "game-instructions.md"), GAME_INSTRUCTIONS, "utf8");
   const codex = new Codex(sdkOptions(apiKey, runDirectory, process.env));
-  const thread = codex.startThread(threadOptions(runDirectory, model));
   return {
     name: "Codex",
-    get threadId() { return thread.id; },
+    model: model ?? "codex-default",
+    pricing: null,
     async decide(prompt, signal) {
+      const thread = codex.startThread(threadOptions(runDirectory, model));
       const turn = await thread.run(prompt, { outputSchema: decisionSchema, signal });
-      // Store no raw reasoning/tool transcripts in the application history.
-      return turn.finalResponse;
+      const usage: Usage | null = turn.usage ? {
+        input: turn.usage.input_tokens - turn.usage.cached_input_tokens,
+        output: turn.usage.output_tokens,
+        cacheRead: turn.usage.cached_input_tokens,
+        cacheWrite: turn.usage.cache_write_input_tokens,
+        thinking: turn.usage.reasoning_output_tokens,
+      } : null;
+      return { text: turn.finalResponse, usage };
     },
   };
 }

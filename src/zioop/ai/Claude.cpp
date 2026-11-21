@@ -25,6 +25,13 @@ namespace {
     constexpr std::uint64_t InvocationBackoff = 60;
     constexpr int Damage = 2;
     constexpr int LowHealth = 30;
+    constexpr int BaseHealth = 100;
+    constexpr int HealthPerLevel = 25;
+    constexpr int HealPercent = 40;
+    constexpr int HurtHealPercent = 60;
+    constexpr std::size_t Water = 3;
+    constexpr std::size_t HealReserve = 2;
+    constexpr std::uint64_t HealBackoff = 10;
     constexpr std::uint64_t FleeDuration = 4;
     constexpr std::uint64_t SpareAfterFlight = 40;
     constexpr std::uint64_t GiveBackoff = 10;
@@ -108,9 +115,12 @@ std::optional<int> Claude::wantedResourceAt(const Memory &memory, const Point &p
         return std::nullopt;
     }
 
-    const auto needed = requirements(memory);
+    const auto ritual = requirements(memory);
     const bool collectAnything = memory.ritualBackoff > 0 ||
-                                 std::ranges::all_of(needed, [](const std::size_t value) { return value == 0; });
+                                 std::ranges::all_of(ritual, [](const std::size_t value) { return value == 0; });
+
+    auto needed = ritual;
+    needed[Water] = (std::max)(needed[Water], HealReserve);
 
     const auto deficitOf = [&](const std::size_t type) {
         return needed[type] > memory.inventory[type] ? needed[type] - memory.inventory[type] : std::size_t{0};
@@ -119,8 +129,9 @@ std::optional<int> Claude::wantedResourceAt(const Memory &memory, const Point &p
     const auto longerLivedDeficit = [&](const std::size_t type) {
         std::size_t missing = 0;
         for (std::size_t other = 0; other < ResourceKinds; ++other) {
-            if (!memory.untakeable[other] && ShelfLife[other] > ShelfLife[type]) {
-                missing += deficitOf(other);
+            if (!memory.untakeable[other] && ShelfLife[other] > ShelfLife[type] &&
+                ritual[other] > memory.inventory[other]) {
+                missing += ritual[other] - memory.inventory[other];
             }
         }
         return missing;
@@ -227,6 +238,7 @@ bool Claude::absorbRitualEvent(Memory &memory, const nlohmann::json &payload) {
         memory.level = payload["level"].get<int>();
         memory.pendingShout = std::format("Niveau {} atteint !", memory.level);
     }
+    memory.health = maxHealth(memory.level);
     return true;
 }
 
@@ -326,7 +338,7 @@ void Claude::remember(Memory &memory, const Decision &previous, const bool ok, c
                 if (previous.command == MessageType::TAKE && type >= 0 && type < static_cast<int>(ResourceKinds) &&
                     payload.value("message", std::string{}) == "Type not found") {
                     memory.untakeable[static_cast<std::size_t>(type)] = true;
-                    std::cout << "[" << previous.parameters.value("agentID", 0) << "] Type " << type
+                    std::cout << "[" << previous.parameters.value("agentId", 0) << "] Type " << type
                               << " refuse par le serveur, je l'ignore desormais." << std::endl;
                 }
                 break;
@@ -344,6 +356,9 @@ void Claude::remember(Memory &memory, const Decision &previous, const bool ok, c
                 }
                 memory.inventory = inventory;
             }
+            if (const auto health = payload.find("health"); health != payload.end() && health->is_number_integer()) {
+                feelHealth(memory, health->get<int>());
+            }
             if (memory.ritualBackoff > 0 && previous.command == MessageType::TAKE && ok) {
                 --memory.ritualBackoff;
             }
@@ -357,6 +372,9 @@ void Claude::remember(Memory &memory, const Decision &previous, const bool ok, c
             break;
         case MessageType::INVOCATION:
             rememberInvocation(memory, previous, ok, payload);
+            break;
+        case MessageType::HEAL:
+            rememberHeal(memory, previous, ok, payload);
             break;
         case MessageType::RITUAL:
             if (!ok) {
@@ -429,7 +447,7 @@ std::optional<Claude::Point> Claude::chooseTarget(Memory &memory) const {
 
 void Claude::rememberAttack(Memory &memory, const Decision &previous, const bool ok, const nlohmann::json &payload) {
     const auto target = previous.parameters.value("targetId", std::size_t{0});
-    const auto self = previous.parameters.value("agentID", std::size_t{0});
+    const auto self = previous.parameters.value("agentId", std::size_t{0});
 
     if (ok) {
         if (payload.value("killed", false)) {
@@ -557,7 +575,7 @@ std::optional<std::string> Claude::resourceRequest(const Memory &memory) const {
 }
 
 void Claude::rememberGive(Memory &memory, const Decision &previous, const bool ok, const nlohmann::json &payload) {
-    const auto self = previous.parameters.value("agentID", std::size_t{0});
+    const auto self = previous.parameters.value("agentId", std::size_t{0});
     const auto targetId = previous.parameters.value("targetID", std::size_t{0});
     const int type = previous.parameters.value("type", -1);
 
@@ -584,7 +602,7 @@ void Claude::rememberGive(Memory &memory, const Decision &previous, const bool o
 }
 
 void Claude::rememberInvocation(Memory &memory, const Decision &previous, const bool ok, const nlohmann::json &payload) {
-    const auto self = previous.parameters.value("agentID", std::size_t{0});
+    const auto self = previous.parameters.value("agentId", std::size_t{0});
 
     if (m_pendingInvocations > 0) {
         --m_pendingInvocations;
@@ -630,6 +648,44 @@ void Claude::feelHealth(Memory &memory, const int health) {
         memory.hurtAt = memory.clock;
     }
     memory.health = health;
+}
+
+int Claude::maxHealth(const int level) {
+    return BaseHealth + ((std::max)(level, 1) - 1) * HealthPerLevel;
+}
+
+bool Claude::wantsHeal(const Memory &memory) const {
+    if (memory.inventory[Water] == 0 || memory.clock < memory.nextHeal) {
+        return false;
+    }
+    const int full = maxHealth(memory.level);
+    if (memory.health >= full) {
+        return false;
+    }
+    const bool critical = memory.health * 100 <= full * HealPercent;
+    const bool underFire = memory.clock <= memory.hurtAt + 2 && memory.health * 100 <= full * HurtHealPercent;
+    return critical || underFire;
+}
+
+void Claude::rememberHeal(Memory &memory, const Decision &previous, const bool ok, const nlohmann::json &payload) {
+    const auto self = previous.parameters.value("agentId", std::size_t{0});
+
+    if (!ok || !payload.value("success", false)) {
+        memory.nextHeal = memory.clock + HealBackoff;
+        memory.needInventory = true;
+        std::cerr << "[" << self << "] Soin refuse : " << payload.value("message", std::string{"pas d'eau magique"})
+                  << std::endl;
+        return;
+    }
+
+    auto &water = memory.inventory[Water];
+    water = water > 0 ? water - 1 : 0;
+    const auto health = payload.find("health");
+    memory.health = health != payload.end() && health->is_number_integer()
+                        ? health->get<int>()
+                        : maxHealth(memory.level);
+    memory.hurtAt = 0;
+    std::cout << "[" << self << "] Soigne avec de l'eau magique, " << memory.health << " PV." << std::endl;
 }
 
 std::optional<Claude::Point> Claude::losingFight(const Memory &memory) const {
@@ -769,6 +825,13 @@ void Claude::decide(
     if (memory.needInventory) {
         memory.needInventory = false;
         inventory(agentId);
+        return;
+    }
+
+    if (wantsHeal(memory)) {
+        std::cout << "[" << agentId << "] Blesse (" << memory.health << "/" << maxHealth(memory.level)
+                  << " PV), je bois de l'eau magique." << std::endl;
+        heal(agentId);
         return;
     }
 

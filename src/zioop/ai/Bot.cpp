@@ -98,6 +98,16 @@ namespace ai {
         );
     }
 
+    void Bot::heal(const std::size_t agentId) {
+        std::cout << "[" << agentId << "] Healing with magic water..." << std::endl;
+
+        sendDecision(
+            agentId,
+            network::Protocol::MessageType::HEAL,
+            {{"agentID", agentId}}
+        );
+    }
+
     bool Bot::isOwnAgent(const std::size_t agentId) {
         std::lock_guard lock(m_stateMutex);
         return m_history.contains(agentId);
@@ -202,7 +212,7 @@ namespace ai {
             return;
         }
 
-        const auto agent = event.find("agentId");
+        const auto agent = event.find("agentID");
         const auto message = event.find("message");
 
         if (event.value("type", std::string{}) == "Ritual" &&
@@ -413,7 +423,7 @@ namespace ai {
             return field->get<std::size_t>();
         };
 
-        const auto payloadAgent = readId("agentId");
+        const auto payloadAgent = readId("agentID");
         const auto spawnedAgent = readId("spawnedAgentId");
 
         std::size_t agentId = 0;
@@ -555,7 +565,7 @@ namespace ai {
                 throw std::runtime_error(response.payload);
             }
             const auto data = nlohmann::json::parse(response.payload);
-            const auto agentId = data.at("agentId").get<std::size_t>();
+            const auto agentId = data.at("agentID").get<std::size_t>();
             {
                 std::lock_guard<std::mutex> lock(m_stateMutex);
                 m_history.try_emplace(agentId);

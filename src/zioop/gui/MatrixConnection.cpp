@@ -55,11 +55,14 @@ namespace gui {
                 agent.actionCount = readUnsigned(entry.at("actionCount"));
             }
             agent.health = entry.at("health").get<int>();
-            if (entry.contains("teamId")) {
-                agent.teamId = readUnsigned(entry.at("teamId"));
-            }
             if (entry.contains("level")) {
                 agent.level = readUnsigned(entry.at("level"));
+            }
+            agent.maxHealth = entry.contains("maxHealth")
+                                  ? entry.at("maxHealth").get<int>()
+                                  : 100 + static_cast<int>(std::max<std::size_t>(agent.level, 1) - 1) * 25;
+            if (entry.contains("teamId")) {
+                agent.teamId = readUnsigned(entry.at("teamId"));
             }
             // Le niveau peut être fourni sans état de rituel.
             if (entry.contains("ritual")) {

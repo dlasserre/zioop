@@ -30,8 +30,7 @@ namespace network {
     void Connection::send(
         const std::vector<std::byte> &data
     ) const {
-        // A tick notification and a command response must never interleave frames.
-        std::lock_guard<std::mutex> lock(m_sendMutex);
+        std::lock_guard lock(m_sendMutex);
         if (!m_running) {
             return;
         }
@@ -104,7 +103,6 @@ namespace network {
                         m_receiveBuffer.begin(),
                         m_receiveBuffer.begin() + consumed
                     );
-                    std::cout << result.frame->payload << '\n';
                 }
             } else if (received == 0) {
                 std::cout

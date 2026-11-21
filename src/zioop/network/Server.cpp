@@ -1,16 +1,16 @@
-#include "zioop/network/Server.hpp"
-#include "zioop/network/Connection.hpp"
-#include "zioop/network/Protocol.hpp"
-#include "zioop/network/Serialization.hpp"
-
-#include <iostream>
 #include <stdexcept>
 #include <utility>
 #include <algorithm>
 #include <unordered_map>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <nlohmann/json.hpp>
+#include <print>
+
+#include "zioop/network/Server.hpp"
+#include "zioop/network/Connection.hpp"
+#include "zioop/network/Protocol.hpp"
+#include "zioop/network/Serialization.hpp"
+#include "zioop/core/Error.hpp"
 
 namespace network {
     namespace {
@@ -44,16 +44,17 @@ namespace network {
             }
         }
 
-        void error(
+        void throwError(
             const Connection &connection,
             const core::AgentId &agentId,
-            const std::string &message
+            const core::Error &error
         ) {
             connection.send(Protocol::encode(
                 Protocol::ResponseType::KO,
                 serializeError({
                     .base = {.agentId = agentId},
-                    .message = message
+                    .errorCode = static_cast<int>(error.code()),
+                    .message = std::string(error.message())
                 }).dump()
             ));
         }
@@ -139,11 +140,11 @@ namespace network {
         Connection &connection,
         const Request &request
     ) {
-        const core::ClientId& clientId = request.clientId;
+        const core::ClientId &clientId = request.clientId;
         const auto placement = m_game.initClient(clientId);
 
         if (!placement) {
-            error(connection, core::AgentId{0}, "Unable to create agent");
+            throwError(connection, core::AgentId{0}, placement.error());
             return;
         }
 
@@ -161,18 +162,15 @@ namespace network {
         const Request &request
     ) {
         try {
-            const core::AgentId& agentId = request.agentId;
-            const core::ClientId& clientId = request.clientId;
+            const core::AgentId &agentId = request.agentId;
+            const core::ClientId &clientId = request.clientId;
             const auto direction = static_cast<core::Direction>(
                 request.body.at("direction").get<std::uint16_t>()
             );
 
-            const auto target = m_game.move(
-                clientId, agentId, direction
-            );
-
-            if (!target || !target->position) {
-                error(connection, agentId, "Unable to move agent");
+            const auto result = m_game.move(clientId, agentId, direction);
+            if (!result) {
+                throwError(connection, agentId, result.error());
                 return;
             }
 
@@ -180,11 +178,11 @@ namespace network {
                 Protocol::ResponseType::OK,
                 serializePosition({
                     .base = {.agentId = agentId},
-                    .position = *target->position
+                    .position = *result->position
                 }).dump()
             ));
         } catch (const nlohmann::json::exception &) {
-            error(connection, core::AgentId{0}, "Invalid payload");
+            throwError(connection, core::AgentId{0}, core::Error{core::ErrorCode::INVALID_PAYLOAD});
         }
     }
 
@@ -193,34 +191,29 @@ namespace network {
         const Request &request
     ) {
         try {
-            const core::AgentId& agentId = request.agentId;
-            const core::ClientId& clientId = request.clientId;
+            const core::AgentId &agentId = request.agentId;
+            const core::ClientId &clientId = request.clientId;
 
             const auto direction = static_cast<core::Direction>(
                 request.body.at("direction").get<std::uint16_t>()
             );
 
-            auto observation = m_game.look(
-                clientId, agentId, direction
-            );
-
+            auto observation = m_game.look(clientId, agentId, direction);
             if (!observation) {
-                error(
+                throwError(
                     connection,
                     agentId,
-                    std::format("Agent {} or cell not found", static_cast<std::size_t>(agentId))
+                    observation.error()
                 );
                 return;
             }
-            observation->base.agentId = agentId;
-            const auto payload = serializeLook(*observation);
 
             connection.send(Protocol::encode(
                 Protocol::ResponseType::OK,
-                payload.dump()
+                serializeLook(*observation).dump()
             ));
         } catch (const nlohmann::json::exception &) {
-            error(connection, core::AgentId{0}, "An error occurred");
+            throwError(connection, core::AgentId{0}, core::Error{core::ErrorCode::GENERIC, "An error occurred"});
         }
     }
 
@@ -229,12 +222,12 @@ namespace network {
         const Request &request
     ) {
         try {
-            const core::AgentId& agentId = request.agentId;
-            const core::ClientId& clientId = request.clientId;
+            const core::AgentId &agentId = request.agentId;
+            const core::ClientId &clientId = request.clientId;
             const auto type = parseResourceType(request.body.at("type").get<int>());
 
             if (!type) {
-                error(connection, agentId, "Type not found");
+                throwError(connection, agentId, core::Error{core::ErrorCode::GENERIC, "Type not found"});
                 return;
             }
 
@@ -245,20 +238,7 @@ namespace network {
             );
 
             if (!result) {
-                error(
-                    connection,
-                    agentId,
-                    std::format("Client({}) not found", static_cast<std::size_t>(clientId))
-                );
-                return;
-            }
-
-            if (!result->taken) {
-                error(
-                    connection,
-                    agentId,
-                    "Unable to take resource (missing resource or ritual  in progress)"
-                );
+                throwError(connection, agentId, result.error());
                 return;
             }
 
@@ -266,13 +246,13 @@ namespace network {
                 Protocol::encode(
                     Protocol::ResponseType::OK,
                     serializeInventory(core::InventoryResult{
-                        .base = { .agentId = agentId },
+                        .base = {.agentId = agentId},
                         .inventory = result->inventory,
                     }).dump()
                 )
             );
         } catch (const nlohmann::json::exception &) {
-            error(connection, core::AgentId{0}, "An error occurred");
+            throwError(connection, core::AgentId{0}, core::Error{core::ErrorCode::GENERIC, "An error occurred"});
         }
     }
 
@@ -281,12 +261,12 @@ namespace network {
         const Request &request
     ) {
         try {
-            const core::AgentId& agentId = request.agentId;
+            const core::AgentId &agentId = request.agentId;
             const auto targetID = request.body.at("targetID").get<core::AgentId>();
             const auto resourceType = parseResourceType(request.body.at("type").get<int>());
 
             if (!resourceType) {
-                error(connection, agentId, "Type not found");
+                throwError(connection, agentId, core::Error{core::ErrorCode::GENERIC, "Type not found"});
                 return;
             }
 
@@ -297,8 +277,8 @@ namespace network {
                 targetID
             );
 
-            if (!result || *result != core::GiveResult::GIVED) {
-                error(connection, agentId, std::format("Give {} failed", static_cast<std::size_t>(agentId)));
+            if (!result) {
+                throwError(connection, agentId, result.error());
                 return;
             }
 
@@ -306,14 +286,15 @@ namespace network {
                 Protocol::encode(
                     Protocol::ResponseType::OK,
                     serializeGive({
-                        .base = { .agentId = agentId },
+                        .base = {.agentId = agentId},
                         .resource = *resourceType,
-                        .targetAgentId = targetID
+                        .targetAgentId = targetID,
+                        .status = result->status
                     }).dump()
                 )
             );
         } catch (const nlohmann::json::exception &e) {
-            error(connection, core::AgentId{0}, e.what());
+            throwError(connection, core::AgentId{0}, core::Error{core::ErrorCode::GENERIC, e.what()});
         }
     }
 
@@ -322,24 +303,20 @@ namespace network {
         const Request &request
     ) {
         try {
-            const core::AgentId& agentId = request.agentId;
+            const core::AgentId &agentId = request.agentId;
+            const core::ClientId &clientId = request.clientId;
 
             const auto inventory = m_game.inventory(
-                connection.getClientId(),
+                clientId,
                 agentId
             );
 
-            if (!inventory) {
-                error(connection, agentId, "Inventory not found");
-                return;
-            }
-
             connection.send(Protocol::encode(
                 Protocol::ResponseType::OK,
-                serializeInventory(*inventory).dump()
+                serializeInventory(inventory).dump()
             ));
         } catch (const nlohmann::json::exception &e) {
-            error(connection, core::AgentId{0}, e.what());
+            throwError(connection, core::AgentId{0}, core::Error{core::ErrorCode::GENERIC, e.what()});
         }
     }
 
@@ -347,11 +324,26 @@ namespace network {
         Connection &connection,
         const Request &request
     ) {
-       try {
+        try {
+            const auto &agentId = request.agentId;
+            const auto &clientId = request.clientId;
 
-       } catch (nlohmann::json::exception &e) {
-           error(connection, core::AgentId{0}, std::format("An error occurred: {}", e.what()));
-       }
+            const auto result = m_game.heal(clientId, agentId);
+            if (!result) {
+                throwError(connection, agentId, result.error());
+                return;
+            }
+            connection.send(Protocol::encode(
+                Protocol::ResponseType::OK,
+                serializeHeal(*result).dump()
+            ));
+        } catch (nlohmann::json::exception &e) {
+            throwError(
+                connection,
+                core::AgentId{0},
+                core::Error{core::ErrorCode::GENERIC, e.what()}
+            );
+        }
     }
 
     void Server::invocation(
@@ -359,15 +351,17 @@ namespace network {
         const Request &request
     ) {
         try {
-            const core::AgentId& agentId = request.agentId;
-            const auto placement =
-                m_game.instanciatAgent(connection.getClientId(), agentId);
+            const core::AgentId &agentId = request.agentId;
+            const core::ClientId &clientId = request.clientId;
 
-            if (!placement || !placement.has_value()) {
-                error(
+            const auto placement =
+                    m_game.instanciatAgent(clientId, agentId);
+
+            if (!placement) {
+                throwError(
                     connection,
                     agentId,
-                    "Cant spawn new agent, matrix is probably full or not enough resources"
+                    placement.error()
                 );
                 return;
             }
@@ -377,7 +371,11 @@ namespace network {
                 serializeInvocation(*placement).dump()
             ));
         } catch (const nlohmann::json::exception &e) {
-            error(connection, core::AgentId{0}, std::format("An error occurred: {}", e.what()));
+            throwError(
+                connection,
+                core::AgentId{0},
+                core::Error{core::ErrorCode::GENERIC, e.what()}
+            );
         }
     }
 
@@ -386,60 +384,31 @@ namespace network {
         const Request &request
     ) {
         try {
-            const core::AgentId& agentId = request.agentId;
+            const core::AgentId &agentId = request.agentId;
             const auto targetId = request.body.at("targetId").get<core::AgentId>();
-
             const auto result = m_game.attack(
                 connection.getClientId(),
                 agentId,
                 targetId
             );
+
             if (!result) {
-                error(connection, agentId, "An error occurred");
+                throwError(connection, agentId, result.error());
                 return;
             }
 
-            using Result = core::AttackResult;
-            switch (*result) {
-                case Result::DAMAGED:
-                    connection.send(
-                        Protocol::encode(
-                            Protocol::ResponseType::OK,
-                            serializeAttack({
-                                .base = {.agentId = agentId},
-                                .targetId = targetId,
-                                .killed = false
-                            }).dump()
-                        )
-                    );
-                    return;
-                case Result::KILLED:
-                    connection.send(Protocol::encode(
-                        Protocol::ResponseType::OK,
-                        serializeAttack({
-                            .base = {.agentId = agentId},
-                            .targetId = targetId,
-                            .killed = true
-                        }).dump()
-                    ));
-                    return;
-                case Result::RITUAL_IN_PROGRESS:
-                    error(connection, agentId, "Ritual in progress");
-                    return;
-                case Result::SAME_OWNER:
-                    error(connection, agentId, "You cant attack yourself");
-                    return;
-                case Result::TARGET_NOT_FOUND:
-                    error(connection, agentId, "Target not found");
-                    return;
-                case Result::TOO_FAR:
-                    error(connection, agentId, "Target is too far from you");
-                    return;
-                case Result::TARGET_TOO_STRONG:
-                    error(connection, agentId, "Target is too strong for you");
-            }
+            connection.send(
+                Protocol::encode(
+                    Protocol::ResponseType::OK,
+                    serializeAttack({
+                        .base = {.agentId = agentId},
+                        .targetId = targetId,
+                        .killed = result->status == core::AttackStatus::KILLED
+                    }).dump()
+                )
+            );
         } catch (const nlohmann::json::exception &e) {
-            error(connection, core::AgentId{0}, e.what());
+            throwError(connection, core::AgentId{0}, core::Error{core::ErrorCode::GENERIC, e.what()});
         }
     }
 
@@ -448,16 +417,16 @@ namespace network {
         const Request &request
     ) {
         try {
-            const core::AgentId& agentId = request.agentId;
-            auto _message = request.body.at("message").get<std::string>();
+            const core::AgentId &agentId = request.agentId;
+            const auto _message = request.body.at("message").get<std::string>();
 
             if (_message.empty()) {
-                error(connection, agentId, "Message is empty");
+                throwError(connection, agentId, core::Error{core::ErrorCode::INVALID_PAYLOAD});
                 return;
             }
 
-            if (_message.size() > 255) {
-                error(connection, agentId, "Message too long");
+            if (_message.size() > MAX_MESSAGE_SIZE) {
+                throwError(connection, agentId,core::Error{core::ErrorCode::MESSAGE_TOO_LONG});
                 return;
             }
 
@@ -468,7 +437,7 @@ namespace network {
             );
 
             if (!result) {
-                error(connection, agentId, "Cant broadcast message");
+                throwError(connection, agentId, result.error());
                 return;
             }
 
@@ -479,7 +448,7 @@ namespace network {
                 )
             );
         } catch (const nlohmann::json::exception &e) {
-            error(connection, core::AgentId{0}, e.what());
+            throwError(connection, core::AgentId{0}, core::Error{core::ErrorCode::GENERIC, e.what()});
         }
     }
 
@@ -488,31 +457,23 @@ namespace network {
         const Request &request
     ) {
         try {
-            const core::AgentId& agentId = request.agentId;
-            const core::ClientId& clientId = request.clientId;
+            const core::AgentId &agentId = request.agentId;
+            const core::ClientId &clientId = request.clientId;
 
             const auto result = m_game.ritual(clientId, agentId);
             if (!result) {
-                error(connection, agentId, "Agent not found or not owned by client");
+                throwError(connection, agentId, result.error());
                 return;
             }
 
-            switch (result->result) {
-                case core::RitualStartResult::STARTED:
-                    connection.send(
-                        Protocol::encode(
-                            Protocol::ResponseType::OK,
-                            serializeRitual(*result).dump()
-                        ));
-                    return;
-                case core::RitualStartResult::ALREADY_IN_PROGRESS:
-                    error(connection, agentId, "Ritual already in progress");
-                    return;
-                case core::RitualStartResult::NOT_ENOUGH_RESOURCES:
-                    error(connection, agentId, "Not enough resources for ritual");
-            }
+            connection.send(
+            Protocol::encode(
+                Protocol::ResponseType::OK,
+                serializeRitual(*result).dump()
+            ));
+
         } catch (const nlohmann::json::exception &e) {
-            error(connection, core::AgentId{0}, e.what());
+            throwError(connection, core::AgentId{0}, core::Error{core::ErrorCode::GENERIC, e.what()});
         }
     }
 
@@ -573,7 +534,7 @@ namespace network {
                 if (!m_running) {
                     break;
                 }
-                std::cerr << std::format("accept() failed: {}\n", WSAGetLastError());
+                std::println(stderr, "accept() failed: {}\n", WSAGetLastError());
                 continue;
             }
 
@@ -589,7 +550,7 @@ namespace network {
             auto onDisconnect = [this](Connection &disconnectedConnection) {
                 std::lock_guard lock_guard(m_disconnectionsMutex);
                 m_disconnections.push(&disconnectedConnection);
-                std::cout << "Client disconnected pulled into cleaning queue\n";
+                std::println("Client disconnected pulled into cleaning queue");
             };
 
             auto connection = std::make_shared<Connection>(
@@ -600,8 +561,7 @@ namespace network {
                 onDisconnect,
                 core::ClientId{m_nextClientId++}
             );
-
-            std::cout << std::format("New client connected ip={} on port={}\n", ip, port);
+            std::println(stdout, "New client connected ip={} on port={}\n", ip, port);
             {
                 Connection *connectionPtr = connection.get();
                 std::lock_guard lock(m_stateMutex);
@@ -641,24 +601,28 @@ namespace network {
     ) {
         using Type = Protocol::MessageType;
 
-        static const std::unordered_map<Type, Handler> handlers{
-            {Type::HELLO, &Server::hello},
-            {Type::MOVE, &Server::move},
-            {Type::GET_MATRIX, &Server::getMatrix},
-            {Type::DISCONNECT, &Server::disconnect},
-            {Type::LOOK, &Server::lookingAt},
-            {Type::TAKE, &Server::take},
-            {Type::INVENTORY, &Server::inventory},
-            {Type::RITUAL, &Server::ritual},
-            {Type::ATTACK, &Server::attack},
-            {Type::INVOCATION, &Server::invocation},
-            {Type::BROADCAST, &Server::broadcast},
-            {Type::GIVE, &Server::give},
-            {Type::HEAL, &Server::heal}
+        struct Route {
+            Handler handler;
+            std::optional<core::GameCommand> command;
+        };
+
+        static const std::unordered_map<Type, Route> handlers{
+            {Type::HELLO, {.handler = &Server::hello, .command = std::nullopt}},
+            {Type::MOVE, {.handler = &Server::move, .command = core::GameCommand::MOVE}},
+            {Type::GET_MATRIX, {.handler = &Server::getMatrix, .command = std::nullopt}},
+            {Type::DISCONNECT, {.handler = &Server::disconnect, .command = std::nullopt}},
+            {Type::LOOK, {.handler = &Server::lookingAt, .command = core::GameCommand::LOOK}},
+            {Type::TAKE, {.handler = &Server::take, .command = core::GameCommand::TAKE}},
+            {Type::INVENTORY, {.handler = &Server::inventory, .command = core::GameCommand::INVENTORY}},
+            {Type::RITUAL, {.handler = &Server::ritual, .command = core::GameCommand::RITUAL}},
+            {Type::ATTACK, {.handler = &Server::attack, .command = core::GameCommand::ATTACK}},
+            {Type::INVOCATION, {.handler = &Server::invocation, .command = core::GameCommand::INVOCATION}},
+            {Type::BROADCAST, {.handler = &Server::broadcast, .command = core::GameCommand::BROADCAST}},
+            {Type::GIVE, {.handler = &Server::give, .command = core::GameCommand::GIVE}},
+            {Type::HEAL, {.handler = &Server::heal, .command = core::GameCommand::HEAL}}
         };
 
         const auto it = handlers.find(message.header.type);
-
         if (it == handlers.end()) {
             connection.send(Protocol::encode(
                 Protocol::ResponseType::KO,
@@ -667,11 +631,38 @@ namespace network {
             return;
         }
 
-        const Handler method = it->second;
+        const auto &[method, command] = it->second;
 
         const auto data = message.getData();
+        std::optional<core::AgentId> agentId;
+        if (data.contains("agentID") && !data["agentID"].is_null()) {
+            agentId = data["agentID"].get<core::AgentId>();
+        }
+
+        if (agentId) {
+            const auto clientId = m_game.getAgentClientId(*agentId);
+            if (clientId != connection.getClientId()) {
+                throwError(
+                    connection,
+                    *agentId,
+                    core::Error{core::ErrorCode::GENERIC, "ClientId does not match with the agent team."}
+                );
+                return;
+            }
+
+            if (command && clientId) {
+                const auto start = m_game.reserve(
+                    *clientId,
+                    *agentId,
+                    *command
+                );
+
+                std::this_thread::sleep_until(*start);
+            }
+        }
+
         const Request request{
-            .agentId = data.at("agentID").get<core::AgentId>(),
+            .agentId = agentId.value_or(core::AgentId{0}),
             .clientId = connection.getClientId(),
             .body = data
         };

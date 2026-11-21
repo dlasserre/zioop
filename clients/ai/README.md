@@ -1,10 +1,9 @@
 # Agents Codex et Claude pour Zioop
 
 Client autonome TypeScript avec les SDK officiels `@openai/codex-sdk` et
-`@anthropic-ai/claude-agent-sdk`. Chaque agent se connecte au serveur TCP existant,
-récolte les fruits et choisit quand lancer un rituel. Les deux moteurs partagent
-les commandes et la gestion du contexte. Aucun changement du serveur ou du
-protocole n'est nécessaire.
+`@anthropic-ai/sdk` (API Messages de Claude). Chaque agent se connecte au serveur
+TCP existant, récolte les ressources, lance ses rituels et combat. Le client est
+conçu pour limiter le nombre de tokens consommés par partie.
 
 ## Installation et lancement
 
@@ -25,91 +24,88 @@ OPENAI_API_KEY=ta_cle_openai
 ANTHROPIC_API_KEY=ta_cle_anthropic
 ```
 
-Une seule clé suffit pour lancer le fournisseur correspondant. Le fichier `.env`
-est ignoré par Git. La clé va uniquement au SDK concerné, jamais dans le prompt
-ni dans les messages TCP envoyés à Zioop. Les appels utilisent la facturation API
-du fournisseur.
-
-Lancer l'un des deux agents :
+Le fichier `.env` est ignoré par Git. La clé va uniquement au SDK concerné, jamais
+dans le prompt ni dans les messages TCP envoyés à Zioop.
 
 ```powershell
-npm run start:codex -- --host 127.0.0.1 --port 9090 --max-decisions 100
-npm run start:claude -- --host 127.0.0.1 --port 9090 --max-decisions 100
+npm run start:claude -- --model haiku --max-decisions 50 -v
+npm run start:claude -- --model opus --effort medium
+npm run start:codex -- --max-decisions 100
 ```
 
-`CODEX_MODEL` ou `CLAUDE_MODEL` dans `.env`, ou `--model NOM`, permet de choisir un
-modèle accessible avec la clé correspondante. Si ce paramètre est absent, le SDK
-choisit son modèle par défaut. `CODEX_API_KEY` est également accepté si
-`OPENAI_API_KEY` est absent. `npm start -- --provider claude` fonctionne aussi ;
-sans option, `npm start` utilise `ZIOOP_PROVIDER`, puis Codex par défaut.
-
-La limite par défaut est de 100 décisions (les consultations d'historique comptent
-aussi). Ctrl+C interrompt l'appel au modèle ou l'attente réseau et déconnecte l'agent.
-
-## Commandes comprises par l'agent
-
-| Commande | Effet |
+| Option | Effet |
 |---|---|
-| `MOVE` | Avancer d'une case dans une direction. |
-| `LOOK` | Consulter les cellules visibles : positions, ressources et autres agents (`id`, `level`). |
-| `TAKE` | Prendre un fruit sur la cellule actuelle. |
-| `ATTACK` | Éliminer un agent de sa cellule, de niveau inférieur ou égal. |
-| `INVENTORY` | Consulter les quantités transportées. |
-| `RITUAL` | Dépenser 10 fruits et attendre le nouveau niveau. |
-| `HISTORY` | Consulter une page de l'historique, côté client uniquement. |
-| `STOP` | Arrêter le client. |
+| `--model`, `-m` | Claude : `haiku`, `sonnet`, `opus` (défaut) ou `fable`, ou un identifiant complet `claude-*`. Codex : identifiant du modèle. Équivalent : `CLAUDE_MODEL` / `CODEX_MODEL`. |
+| `--effort` | Claude : `low` (défaut), `medium`, `high`, `xhigh` ou `max`. Plus l'effort est élevé, plus la réflexion coûte de tokens de sortie. Équivalent : `CLAUDE_EFFORT`. |
+| `--max-decisions` | Nombre maximal d'appels à l'IA (100 par défaut). Chaque appel produit un plan de plusieurs actions. |
+| `-v`, `--verbose` | Affiche le prompt envoyé, les réponses du serveur, les événements et les tokens de chaque appel. |
 
-Les directions sont traduites vers les valeurs réelles du protocole :
-NORTH=0, SOUTH=90, EAST=180, WEST=270. L'identifiant de l'agent provient du `HELLO`
-du serveur ; il est ajouté par le client, pas choisi par le modèle.
-Les décisions sont produites sous schéma JSON puis validées localement.
-Pour `ATTACK`, le modèle choisit seulement `target`, l'identifiant d'un agent vu par
-`LOOK` ; le client l'envoie dans le champ `targetId` attendu par le serveur.
-L'état transmis au modèle garde la dernière position et le niveau de chaque agent
-vu (`agents`), ainsi que le nombre d'éliminations (`kills`). Le serveur ne prévient
-pas un agent éliminé : ses commandes suivantes répondent KO, et le modèle a pour
-consigne de s'arrêter avec `STOP`.
-`DROP`, `BROADCAST` et `ROTATION` ne sont pas exposées car le serveur
-ne les traite pas encore.
+Alias et tarifs utilisés pour l'estimation des coûts (dollars par million de tokens) :
 
-Le client n'a qu'une requête TCP en attente. Pour `RITUAL`, le délai autorisé
-est de `30 s × niveau cible + 15 s` ; les autres requêtes ont un délai de 10 s.
-Il ne relance jamais une commande après une coupure ou un timeout, car son résultat
-pourrait être inconnu. Une déconnexion termine la partie locale.
+| Alias | Modèle | Entrée | Sortie | Lecture cache | Écriture cache |
+|---|---|---|---|---|---|
+| `haiku` | `claude-haiku-5-5` | 0,10 | 0,50 | 0,01 (estimé) | 0,125 |
+| `sonnet` | `claude-sonnet-5-5` | 2 | 10 | 0,20 | 2,50 |
+| `opus` | `claude-opus-5-5` | 4 | 20 | 0,20 | 5 |
+| `fable` | `claude-fable-5-1` | 10 | 50 | 0,25 | 12,50 |
 
-## Contexte et historique
+Pour `sonnet`, `opus` et `fable`, le client active le repli automatique côté serveur
+(`fallbacks: "default"`) : si le modèle refuse une requête, l'API la rejoue sur un
+autre modèle au lieu d'échouer.
+
+## Stratégie d'économie de tokens
+
+1. **Aucun historique de conversation.** Chaque appel est indépendant : le modèle
+   reçoit uniquement les règles du jeu et un état compact (environ 500 caractères).
+   Le coût d'un appel reste constant pendant toute la partie au lieu de croître.
+2. **Mémoire écrite par le modèle.** Le champ `memory` (200 caractères maximum)
+   est la seule mémoire entre deux appels. Le modèle y note son plan, les zones
+   intéressantes et les menaces ; le client le lui renvoie au tour suivant.
+3. **Règles en cache.** Le prompt système est identique d'un appel à l'autre et
+   marqué `cache_control` : après le premier appel, il est relu depuis le cache à
+   environ 5 % du prix (Opus) au lieu du plein tarif.
+4. **Plans de plusieurs actions.** Le modèle renvoie jusqu'à 8 actions exécutées
+   à la suite. Il n'est rappelé que si une action échoue, si un agent apparaît sur
+   sa case, si un message arrive, après un rituel ou à la fin du plan.
+5. **Automatismes sans IA.** Après chaque déplacement, le client fait un `LOOK`,
+   prend les ressources utiles au prochain rituel et lance `RITUAL` dès que
+   l'inventaire suffit. Il attend la fin du rituel (événement `Ritual`) sans appeler
+   le modèle, et s'arrête à la réception de l'événement `Died`.
+6. **Réflexion limitée.** L'effort `low` par défaut réduit les tokens de réflexion,
+   qui sont facturés comme des tokens de sortie.
+
+Le bilan de fin de partie et `session.json` donnent le nombre d'appels, d'actions
+par appel, les tokens (entrée, cache lu, cache écrit, sortie), le taux de cache et
+le coût estimé par appel et par action.
+
+## Plan renvoyé par le modèle
+
+```json
+{ "plan": [{ "action": "MOVE", "arg": "E" }, { "action": "MOVE", "arg": "E" }], "memory": "...", "why": "..." }
+```
+
+| Action | Argument |
+|---|---|
+| `MOVE`, `LOOK` | `N`, `S`, `E` ou `W` |
+| `TAKE` | `a` (pomme), `c` (gâteau), `m` (viande) ou `w` (eau magique) |
+| `ATTACK` | identifiant de l'agent ciblé |
+| `INVENTORY`, `RITUAL`, `STOP` | vide |
+
+Le client valide chaque action, ajoute l'identifiant de l'agent reçu au `HELLO` et
+traduit les directions vers le protocole (NORTH=0, SOUTH=90, EAST=180, WEST=270).
+Il n'a qu'une requête TCP en attente et ne relance jamais une commande après une
+coupure ou un timeout.
+
+## Journal
 
 Chaque partie crée un dossier `runs/<fournisseur-date-identifiant>/` contenant :
 
-- `history.jsonl` : actions, intentions courtes, paramètres, réponses réelles
-  `OK`/`KO`, numéros de séquence, dates et durées ;
-- `session.json` : fournisseur, état connu, notes de mémoire et identifiant de conversation ;
-- `codex-home/` ou `claude-home/` : conversation persistée par le SDK, isolée de ta configuration personnelle.
-
-Les décisions utilisent la même conversation pendant toute la connexion :
-un même thread Codex ou une session Claude reprise via son identifiant `session_id`.
-Chaque tour reçoit aussi l'état connu, le dernier résultat, les douze dernières
-entrées du journal, les positions visitées et les notes de mémoire du modèle.
-`HISTORY` donne accès aux événements plus anciens : `historyLimit` de 1 à 20,
-`historyBefore` exclusif, ou `null` pour la dernière page. Les gros résultats sont
-tronqués dans le prompt pour borner sa taille ; le journal conserve les réponses complètes.
-
-Pour consulter toi-même le journal :
+- `history.jsonl` : actions, plans, réponses réelles `OK`/`KO`, tokens et latence de chaque appel ;
+- `session.json` : statut, modèle, état final et métriques de coût.
 
 ```powershell
 npm run history -- --file runs/<session>/history.jsonl --last 20
 ```
-
-Une nouvelle connexion démarre un **nouvel agent** et une **nouvelle conversation**.
-Le serveur actuel supprime l'agent à la déconnexion et ne propose pas de reprise
-d'identité : réutiliser aveuglément un ancien état serait incorrect. Les anciens
-journaux restent consultables avec la commande ci-dessus.
-
-Codex travaille dans un dossier de contexte en lecture seule, avec le shell,
-la recherche web et les sous-agents désactivés. Claude utilise une liste vide
-d'outils, de skills et de serveurs MCP ; il ne charge pas les réglages ni les
-plugins personnels. Le client assure lui-même les commandes du jeu et l'écriture
-du journal.
 
 ## Tests
 
@@ -117,14 +113,7 @@ du journal.
 npm test
 ```
 
-Les tests utilisent un serveur TCP simulé et des décisions déterministes :
-ils ne consomment aucun crédit API. Ils vérifient les trames fragmentées,
-l'historique, le contexte des deux moteurs, les commandes invalides, le rituel
-différé, les attaques, les timeouts et l'interruption. Les tests de l'adaptateur Claude simulent
-le SDK pour vérifier la reprise de session, le JSON structuré et les erreurs API.
-Un essai réel des modèles nécessite les clés correspondantes.
-
-Références officielles : [SDK Codex](https://learn.chatgpt.com/docs/codex-sdk),
-[authentification OpenAI](https://learn.chatgpt.com/docs/auth),
-[sessions Claude](https://code.claude.com/docs/en/agent-sdk/sessions),
-[sorties structurées Claude](https://code.claude.com/docs/en/agent-sdk/structured-outputs).
+Les tests utilisent un serveur TCP simulé et des décisions déterministes : ils ne
+consomment aucun crédit API. Ils vérifient le protocole, les plans, les
+automatismes, les rituels par événement, la mort de l'agent, la construction des
+requêtes Claude (cache, effort, sortie structurée, repli) et le calcul des coûts.

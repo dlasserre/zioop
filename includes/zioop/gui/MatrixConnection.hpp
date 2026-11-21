@@ -36,6 +36,7 @@ namespace gui {
             std::size_t level{};
             std::size_t teamId{};
             int health{};
+            int maxHealth{100};
             std::vector<InventoryItem> inventory;
             bool ritual{false};
             std::string message{};

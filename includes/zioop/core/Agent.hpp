@@ -12,8 +12,6 @@
 
 namespace core {
 
-    constexpr int FULL_LIFE = 100;
-
     inline constexpr std::array<ResourceCount, 3> RITUAL_REQUIREMENTS{{
             {10, 5,  2, 1},
             {20, 10, 4, 2},
@@ -26,6 +24,9 @@ namespace core {
 
     class Agent {
     public:
+
+        using Clock = std::chrono::steady_clock;
+
         enum LEVEL { BRONZY = 1, SILVER = 2, GOLD = 3 };
 
         explicit Agent(ClientId clientId);
@@ -45,7 +46,7 @@ namespace core {
 
         [[nodiscard]] Inventory &getInventory();
 
-        [[nodiscard]] std::vector<Inventory::InventoryResource> getItems() const;
+        [[nodiscard]] std::vector<InventoryResource> getItems() const;
 
         [[nodiscard]] Cell *getCell() const { return m_cell; }
 
@@ -59,7 +60,7 @@ namespace core {
             Direction direction
         ) const;
 
-        [[nodiscard]] AttackResult attack(Agent* target);
+        [[nodiscard]] AttackStatus attack(Agent* target);
 
         [[nodiscard]] bool killed() const { return m_health == 0; }
 
@@ -67,25 +68,20 @@ namespace core {
 
         [[nodiscard]] std::optional<std::string> getSpeech(std::chrono::steady_clock::time_point now) const;
 
-        [[nodiscard]] std::optional<Direction> getLookDirection() const {
-            return m_lookDirection;
-        }
+        [[nodiscard]] std::optional<Direction> getLookDirection() const;
 
-        [[nodiscard]] std::size_t getLookCount() const {
-            return m_lookCount;
-        }
+        [[nodiscard]] std::size_t getLookCount() const;
 
-        [[nodiscard]] std::optional<AgentId> getAttackTarget() const {
-            return m_attackTarget;
-        }
+        [[nodiscard]] std::optional<AgentId> getAttackTarget() const;
 
-        [[nodiscard]] std::size_t getAttackCount() const {
-            return m_attackCount;
-        }
+        [[nodiscard]] std::size_t getAttackCount() const;
 
-        [[nodiscard]] ClientId getClientId() const {
-            return m_clientId;
-        }
+        [[nodiscard]] ClientId getClientId() const;
+
+        [[nodiscard]] Clock::time_point reserve(
+            std::chrono::milliseconds duration,
+            Clock::time_point now
+        );
 
         bool take(ResourceType type);
 
@@ -97,14 +93,13 @@ namespace core {
 
         void recordLook(Direction direction);
 
-        void setHealth(const int health) {
-            if (health <= 0 || health > 100) {
-                return;
-            }
-            m_health = health;
-        }
+        void setFullLife();
 
     private:
+
+        static constexpr int BASE_HP = 100;
+        static constexpr int HP_PER_LEVEL = 25;
+
         struct LevelResources {
             int level;
             std::unordered_map<ResourceType, std::size_t> resources;
@@ -125,13 +120,15 @@ namespace core {
         std::size_t m_lookCount{0};
         std::optional<Direction> m_lookDirection;
         std::optional<Speech> m_speech;
+        Clock::time_point m_readyAt{};
+
 
         ClientId m_clientId;
         AgentId m_id;
 
         Cell *m_cell{nullptr};
         int m_level{1};
-        int m_health{FULL_LIFE};
+        int m_health{BASE_HP};
         std::optional<Ritual> m_ritual;
         Inventory m_inventory;
     };

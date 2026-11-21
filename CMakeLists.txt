@@ -53,6 +53,7 @@ if(MSVC)
             zioop_flags
             INTERFACE
             _CRT_SECURE_NO_WARNINGS
+            NOMINMAX
     )
 else()
     target_compile_options(

@@ -1,63 +1,55 @@
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
-import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { runtimeEnvironment, type Brain } from "./brain.js";
+import Anthropic from "@anthropic-ai/sdk";
+import type { Brain, BrainReply } from "./brain.js";
 import { decisionSchema, GAME_INSTRUCTIONS } from "./commands.js";
+import type { Usage } from "./metrics.js";
+import type { Effort, ModelInfo } from "./models.js";
 
-export type ClaudeQueryFactory = (args: { prompt: string; options: Options }) => AsyncIterable<SDKMessage> & { close(): void };
+const MAX_TOKENS = 8000;
+const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
-export function claudeOptions(apiKey: string, runDirectory: string, environment: NodeJS.ProcessEnv, model?: string): Options {
+export type ClaudeRequest = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
+export type ClaudeSend = (request: ClaudeRequest, signal: AbortSignal) => Promise<Anthropic.Beta.Messages.BetaMessage>;
+
+export function claudeRequest(model: ModelInfo, effort: Effort, prompt: string): ClaudeRequest {
   return {
-    ...(model ? { model } : {}),
-    cwd: join(runDirectory, "context"),
-    env: { ...runtimeEnvironment(environment), ANTHROPIC_API_KEY: apiKey, CLAUDE_CONFIG_DIR: join(runDirectory, "claude-home") },
-    systemPrompt: GAME_INSTRUCTIONS,
-    tools: [],
-    settingSources: [],
-    plugins: [],
-    skills: [],
-    mcpServers: {},
-    strictMcpConfig: true,
-    permissionMode: "dontAsk",
-    persistSession: true,
-    outputFormat: { type: "json_schema", schema: decisionSchema },
-    maxTurns: 5,
+    model: model.id,
+    max_tokens: MAX_TOKENS,
+    system: [{ type: "text", text: GAME_INSTRUCTIONS, cache_control: { type: "ephemeral" } }],
+    messages: [{ role: "user", content: prompt }],
+    output_config: { effort, format: { type: "json_schema", schema: decisionSchema as unknown as Record<string, unknown> } },
+    ...(model.fallbacks ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
   };
 }
 
-export async function createClaudeBrain(apiKey: string, runDirectory: string, model?: string, runQuery: ClaudeQueryFactory = query): Promise<Brain> {
-  await mkdir(join(runDirectory, "claude-home"), { recursive: true });
-  await mkdir(join(runDirectory, "context"), { recursive: true });
-  const options = claudeOptions(apiKey, runDirectory, process.env, model);
-  let sessionId: string | null = null;
+export function readUsage(usage: Anthropic.Beta.Messages.BetaUsage): Usage {
+  return {
+    input: usage.input_tokens,
+    output: usage.output_tokens,
+    cacheRead: usage.cache_read_input_tokens ?? 0,
+    cacheWrite: usage.cache_creation_input_tokens ?? 0,
+    thinking: usage.output_tokens_details?.thinking_tokens ?? 0,
+  };
+}
+
+export function readDecision(message: Anthropic.Beta.Messages.BetaMessage): string {
+  if (message.stop_reason === "refusal") throw new Error(`Claude a refusé la requête (${message.stop_details?.category ?? "sans catégorie"})`);
+  if (message.stop_reason === "max_tokens") throw new Error("Claude a atteint max_tokens avant de terminer sa décision");
+  const text = message.content.filter((block) => block.type === "text").map((block) => block.text).join("");
+  if (!text) throw new Error("Claude n'a renvoyé aucune décision");
+  return text;
+}
+
+export function createClaudeBrain(apiKey: string, model: ModelInfo, effort: Effort, send?: ClaudeSend): Brain {
+  const client = send ? null : new Anthropic({ apiKey, maxRetries: 2 });
+  const transport: ClaudeSend = send ?? ((request, signal) => client!.beta.messages.create(request, { signal }));
   return {
     name: "Claude",
-    get threadId() { return sessionId; },
-    async decide(prompt, signal) {
+    model: model.id,
+    pricing: model.pricing,
+    async decide(prompt, signal): Promise<BrainReply> {
       signal.throwIfAborted();
-      const abortController = new AbortController();
-      const cancel = () => abortController.abort(signal.reason);
-      signal.addEventListener("abort", cancel, { once: true });
-      let stream: ReturnType<ClaudeQueryFactory> | undefined;
-      try {
-        stream = runQuery({ prompt, options: { ...options, abortController, ...(sessionId ? { resume: sessionId } : {}) } });
-        let output: string | undefined;
-        for await (const message of stream) {
-          if (message.type === "system" && message.subtype === "init") sessionId = message.session_id;
-          if (message.type === "result") {
-            sessionId = message.session_id;
-            if (message.subtype !== "success") throw new Error(`Claude: ${message.subtype}: ${message.errors.join("; ")}`);
-            if (message.is_error) throw new Error(`Claude: ${message.result || "API request failed"}`);
-            if (message.structured_output === undefined) throw new Error("Claude returned no valid structured decision");
-            output = JSON.stringify(message.structured_output);
-          }
-        }
-        if (output === undefined) throw new Error("Claude query ended without a decision");
-        return output;
-      } finally {
-        signal.removeEventListener("abort", cancel);
-        stream?.close();
-      }
+      const message = await transport(claudeRequest(model, effort, prompt), signal);
+      return { text: readDecision(message), usage: readUsage(message.usage) };
     },
   };
 }

@@ -2,11 +2,12 @@
 
 #include <vector>
 
-#include "MatrixSnapshot.hpp"
-#include "Resource.hpp"
-#include "Types.hpp"
+#include "zioop/core/MatrixSnapshot.hpp"
+
 
 namespace core {
+
+    struct InventoryResource;
 
     enum class RitualStartResult {
         STARTED,
@@ -14,7 +15,7 @@ namespace core {
         NOT_ENOUGH_RESOURCES
     };
 
-    enum class AttackResult {
+    enum class AttackStatus {
         KILLED,
         RITUAL_IN_PROGRESS,
         TARGET_NOT_FOUND,
@@ -24,21 +25,52 @@ namespace core {
         DAMAGED
     };
 
-    enum class GiveResult {
-        GIVED,
+    constexpr std::string_view attackStatusErrorMessage(const AttackStatus status) {
+        switch (status) {
+            case AttackStatus::RITUAL_IN_PROGRESS:
+                return "Ritual already in progress";
+            case AttackStatus::SAME_OWNER:
+                return "Cannot attack your own agent";
+            case AttackStatus::TARGET_NOT_FOUND:
+                return "Target not found";
+            case AttackStatus::TARGET_TOO_STRONG:
+                return "Target is too strong";
+            case AttackStatus::TOO_FAR:
+                return "Target is too far";
+        }
+
+        return "Unknown attack result";
+    }
+
+    enum class GiveStatus {
+        GIVEN,
         RESOURCE_NOT_FOUND,
         TARGET_NOT_FOUND,
         CANT_GIVE_YOURSELF,
-        TARGET_TO_FAR
+        TARGET_TO_FAR,
+        FAILED
     };
 
     struct DefaultResult {
         AgentId agentId;
     } typedef TakeResult;
 
+    struct AttackResult {
+        DefaultResult base;
+        AgentId targetId;
+        AttackStatus status;
+    };
+
     struct ErrorResult {
         DefaultResult base;
+        int errorCode;
         std::string message;
+    };
+
+    struct GiveResult {
+        DefaultResult base;
+        AgentId targetId;
+        GiveStatus status;
     };
 
     struct InvocationResult {
@@ -55,6 +87,11 @@ namespace core {
         AgentId id;
         int level;
         int health;
+    };
+
+    struct HealResult {
+        DefaultResult base;
+        bool success{false};
     };
 
     struct ObservedCell {
@@ -88,7 +125,12 @@ namespace core {
 
     struct InventoryResult {
         DefaultResult base;
-        std::vector<Inventory::InventoryResource> inventory;
+        std::vector<InventoryResource> inventory;
+    };
+
+    struct TakenResult {
+        DefaultResult base;
+        std::vector<InventoryResource> inventory;
     };
 
     struct RitualResult {
@@ -106,5 +148,6 @@ namespace core {
         DefaultResult base;
         ResourceType resource;
         AgentId targetAgentId;
+        GiveStatus status;
     };
 }

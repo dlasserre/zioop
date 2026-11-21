@@ -40,36 +40,36 @@ namespace core {
         return true;
     }
 
-    AttackResult Agent::attack(Agent* target) {
+    AttackStatus Agent::attack(Agent* target) {
         if (!target) {
-            return AttackResult::TARGET_NOT_FOUND;
+            return AttackStatus::TARGET_NOT_FOUND;
         }
 
         if (isRitualInProgress() || target->isRitualInProgress()) {
-            return AttackResult::RITUAL_IN_PROGRESS;
+            return AttackStatus::RITUAL_IN_PROGRESS;
         }
 
         if (getClientId() == target->getClientId()) {
-            return AttackResult::SAME_OWNER;
+            return AttackStatus::SAME_OWNER;
         }
 
         if (!getCell() || getCell() != target->getCell()) {
-            return AttackResult::TOO_FAR;
+            return AttackStatus::TOO_FAR;
         }
 
         if (getLevel() < target->getLevel()) {
-            return AttackResult::TARGET_TOO_STRONG;
+            return AttackStatus::TARGET_TOO_STRONG;
         }
 
         if (target->killed()) {
-            return AttackResult::TARGET_NOT_FOUND;
+            return AttackStatus::TARGET_NOT_FOUND;
         }
 
         m_attackTarget = target->getId();
         ++m_attackCount;
         target->damage(getLevel() * DAMAGE);
 
-        return target->killed() ? AttackResult::KILLED : AttackResult::DAMAGED;
+        return target->killed() ? AttackStatus::KILLED : AttackStatus::DAMAGED;
     }
 
     bool Agent::completeRitual(const std::chrono::steady_clock::time_point now) {
@@ -80,6 +80,12 @@ namespace core {
         m_level = m_ritual->targetLevel;
         m_ritual.reset();
         return true;
+    }
+
+    void Agent::setFullLife() {
+        const auto level = std::max(1, getLevel());
+        const int hp = BASE_HP + (level - 1) * HP_PER_LEVEL;
+        m_health = hp;
     }
 
     bool Agent::damage(const int damage) {
@@ -94,7 +100,7 @@ namespace core {
         m_cell = cell;
     }
 
-    bool Agent::take(const ResourceType type) {
+    [[nodiscard]] bool Agent::take(const ResourceType type) {
         if (!m_cell || isRitualInProgress()) {
             return false;
         }
@@ -110,8 +116,8 @@ namespace core {
         return true;
     }
 
-    std::vector<Inventory::InventoryResource> Agent::getItems() const {
-        std::vector<Inventory::InventoryResource> result;
+    std::vector<InventoryResource> Agent::getItems() const {
+        std::vector<InventoryResource> result;
 
         for (const auto &[type, quantity]: m_inventory.getItems()) {
             result.push_back({
@@ -151,7 +157,7 @@ namespace core {
             m_level
         );
 
-        LookResult result{};
+        LookResult result{.base = { .agentId = m_id }};
 
         for (const auto &position: positions) {
             const auto *cell = matrix.getCell(position);
@@ -187,6 +193,35 @@ namespace core {
         }
 
         return result;
+    }
+
+    std::optional<Direction> Agent::getLookDirection() const {
+        return m_lookDirection;
+    }
+
+    std::size_t Agent::getLookCount() const {
+        return m_lookCount;
+    }
+
+    std::optional<AgentId> Agent::getAttackTarget() const {
+        return m_attackTarget;
+    }
+
+    std::size_t Agent::getAttackCount() const {
+        return m_attackCount;
+    }
+
+    ClientId Agent::getClientId() const {
+        return m_clientId;
+    }
+
+    std::chrono::steady_clock::time_point Agent::reserve(
+        const std::chrono::milliseconds duration,
+        const Clock::time_point now
+    ) {
+        const auto start = std::max(now, m_readyAt);
+        m_readyAt = start + duration;
+        return start;
     }
 
     void Agent::say(std::string message, const std::chrono::steady_clock::time_point until) {

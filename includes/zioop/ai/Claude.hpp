@@ -81,6 +81,7 @@ namespace ai {
             std::uint64_t fleeUntil{0};
             std::optional<Point> fleeFrom;
             std::uint64_t nextGive{0};
+            std::uint64_t nextHeal{0};
         };
 
         void remember(Memory &memory, const Decision &previous, bool ok, const nlohmann::json &payload);
@@ -108,6 +109,12 @@ namespace ai {
         [[nodiscard]] std::optional<Point> losingFight(const Memory &memory) const;
 
         static void feelHealth(Memory &memory, int health);
+
+        [[nodiscard]] static int maxHealth(int level);
+
+        [[nodiscard]] bool wantsHeal(const Memory &memory) const;
+
+        void rememberHeal(Memory &memory, const Decision &previous, bool ok, const nlohmann::json &payload);
 
         [[nodiscard]] std::optional<std::pair<std::size_t, Point>> nearestPrey(const Memory &memory) const;
 

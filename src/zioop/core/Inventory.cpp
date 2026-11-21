@@ -35,12 +35,11 @@ namespace core {
     }
 
     bool Inventory::remove(const ResourceType type, const std::size_t quantity) {
-        std::size_t left = count(type);
-
-        if (left < quantity) {
+        if (count(type) < quantity) {
             return false;
         }
 
+        std::size_t left = quantity;
         std::erase_if(m_resources, [&](const auto &r) {
             if (left == 0 || type != r.type()) return false;
             --left;
@@ -51,7 +50,7 @@ namespace core {
     }
 
     bool Inventory::has(const ResourceType type, const std::size_t quantity) const {
-        return count(type) > quantity;
+        return count(type) >= quantity;
     }
 
     bool Inventory::has(const ResourceType type) const {
@@ -95,18 +94,18 @@ namespace core {
         m_resources.push_back(resource);
     }
 
-    bool Inventory::give(ResourceType type, Inventory &target) {
+    GiveStatus Inventory::give(ResourceType type, Inventory &target) {
         const auto it = std::ranges::find_if(m_resources, [&](const auto& r) {
             return r.type() == type;
         });
 
         if (it == m_resources.end()) {
-            return false;
+            return GiveStatus::RESOURCE_NOT_FOUND;
         }
 
         target.received(*it);
         m_resources.erase(it);
-        return true;
+        return GiveStatus::GIVEN;
     }
 
 }

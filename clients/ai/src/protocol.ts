@@ -1,18 +1,23 @@
 import { Socket } from "node:net";
 
-// Protocol.hpp: uint16 type + uint32 UTF-8 payload length, both in network order.
-export const Message = { HELLO: 0, MOVE: 1, LOOK: 2, TAKE: 3, ATTACK: 5, INVENTORY: 7, RITUAL: 8, DISCONNECT: 9 } as const;
+export const Message = { HELLO: 0, MOVE: 1, LOOK: 2, TAKE: 3, ATTACK: 5, BROADCAST: 6, INVENTORY: 7, RITUAL: 8, DISCONNECT: 9, INVOCATION: 12, GIVE: 13, HEAL: 14 } as const;
 export const Response = { OK: 0, KO: 1, EVENT: 5 } as const;
 export const Direction = { NORTH: 0, SOUTH: 90, EAST: 180, WEST: 270 } as const;
 export type GameReply = { ok: boolean; data: unknown };
 const MAX_PAYLOAD = 1024 * 1024;
 
-// KO payloads are plain text, or JSON carrying a "reason" (ATTACK).
-function failureReason(payload: string): string {
+export type GameEvent = Record<string, unknown> & { type?: unknown };
+
+export function failureReason(payload: string): string {
   try {
     const value: unknown = JSON.parse(payload);
-    if (value && typeof value === "object" && "reason" in value && typeof value.reason === "string") return value.reason;
-  } catch { /* plain-text reason */ }
+    if (value && typeof value === "object") {
+      if ("message" in value && typeof value.message === "string") return value.message;
+      if ("reason" in value && typeof value.reason === "string") return value.reason;
+    }
+  } catch {
+    return payload;
+  }
   return payload;
 }
 
@@ -48,6 +53,7 @@ export class GameConnection {
   private failure: Error | undefined;
   private connected = false;
   onDisconnect: (() => void) | undefined;
+  onEvent: ((event: GameEvent) => void) | undefined;
 
   constructor() {
     this.socket.on("error", (error) => this.fail(error));
@@ -55,7 +61,10 @@ export class GameConnection {
     this.socket.on("data", (chunk: Buffer) => {
       try {
         for (const frame of this.decoder.push(chunk)) {
-          if (frame.type === Response.EVENT) continue;
+          if (frame.type === Response.EVENT) {
+            this.emit(frame.payload);
+            continue;
+          }
           if (!this.pending) throw new Error("Unexpected server response; cannot correlate commands");
           if (frame.type !== Response.OK && frame.type !== Response.KO) throw new Error(`Unknown response type ${frame.type}`);
           const reply: GameReply = { ok: frame.type === Response.OK, data: frame.type === Response.OK ? JSON.parse(frame.payload) : failureReason(frame.payload) };
@@ -112,6 +121,16 @@ export class GameConnection {
   close(): void {
     if (this.connected && !this.failure) this.socket.write(encode(Message.DISCONNECT, {}));
     this.fail(new Error("Game connection stopped"));
+  }
+
+  private emit(payload: string): void {
+    let event: unknown;
+    try {
+      event = JSON.parse(payload);
+    } catch {
+      return;
+    }
+    if (event && typeof event === "object" && !Array.isArray(event)) this.onEvent?.(event as GameEvent);
   }
 
   private fail(error: Error): void {

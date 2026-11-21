@@ -1,100 +1,38 @@
 import { performance } from "node:perf_hooks";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Brain } from "./brain.js";
-import { GAME_INSTRUCTIONS, gameCommand, object, parseDecision } from "./commands.js";
+import { direction, gameCommand, gift, message, parseDecision, resource, type Decision, type Step } from "./commands.js";
+import { applyEvent, applyReply, initialState, MAX_LEVEL, note, renderState, ritualReady, snapshot, wantedHere, RESOURCE_CODES, type State } from "./game.js";
 import { Journal } from "./history.js";
-import { GameConnection, Message, type GameReply } from "./protocol.js";
+import { Meter } from "./metrics.js";
+import { GameConnection, Message, type GameEvent, type GameReply } from "./protocol.js";
 
-export type State = {
-  agentId: number;
-  level: number;
-  position: { x: number; y: number };
-  inventory: unknown;
-  memory: string;
-  visited: Record<string, number>;
-  // Last known position [x,y] and level of the agents seen by LOOK.
-  agents: Record<string, { level: number; position: [number, number] }>;
-  kills: number;
-};
+export { initialState } from "./game.js";
 
-function integer(value: unknown, minimum = 0): number {
-  if (!Number.isSafeInteger(value) || Number(value) < minimum) throw new Error("Invalid integer from game server");
-  return value as number;
+const DECISION_TIMEOUT = 120_000;
+const ACTION_TIMEOUT = 10_000;
+const MAX_INVALID = 3;
+const MAX_AUTO_TAKES = 8;
+
+export function ritualTimeout(level: number): number {
+  return 30_000 * (level + 1) + 15_000;
 }
 
-function position(value: unknown): State["position"] {
-  const point = object(value);
-  return { x: integer(point.x), y: integer(point.y) };
-}
-
-function cellPosition(value: unknown): [number, number] {
-  if (!Array.isArray(value) || value.length !== 2) throw new Error("Invalid cell position from game server");
-  return [integer(value[0]), integer(value[1])];
-}
-
-function visit(state: State): void {
-  const key = `${state.position.x},${state.position.y}`;
-  state.visited[key] = (state.visited[key] ?? 0) + 1;
-}
-
-export function initialState(reply: GameReply): State {
-  if (!reply.ok) throw new Error(`HELLO rejected: ${String(reply.data)}`);
-  const data = object(reply.data);
-  const state: State = { agentId: integer(data.agentId, 1), level: 1, position: position(data.position), inventory: null, memory: "", visited: {}, agents: {}, kills: 0 };
-  visit(state);
-  return state;
-}
-
-export function updateState(state: State, command: string, reply: GameReply): void {
-  if (!reply.ok) return;
-  const data = object(reply.data);
-  if (command === "MOVE") { state.position = position(data.position); visit(state); }
-  if (command === "TAKE" || command === "INVENTORY") {
-    if (!Array.isArray(data.resources)) throw new Error("Invalid inventory from server");
-    state.inventory = data.resources;
+function normalize(step: Step): Step {
+  if (step.action === "MOVE" || step.action === "LOOK") return { action: step.action, arg: direction(step.arg).charAt(0) };
+  if (step.action === "TAKE") return { action: step.action, arg: RESOURCE_CODES[resource(step.arg)]! };
+  if (step.action === "ATTACK") return { action: step.action, arg: step.arg.trim().replace(/^#/, "") };
+  if (step.action === "GIVE") {
+    const { targetId, type } = gift(step.arg);
+    return { action: step.action, arg: `${targetId}:${RESOURCE_CODES[type]!}` };
   }
-  if (command === "RITUAL") {
-    if (integer(data.agentId, 1) !== state.agentId) throw new Error("Ritual response belongs to another agent");
-    const level = integer(data.level, 2);
-    if (level !== state.level + 1) throw new Error("Unexpected level in ritual response");
-    state.level = level;
-    // A successful ritual consumed fruit. Refresh rather than keeping a stale inventory.
-    state.inventory = null;
-  }
-  if (command === "LOOK") {
-    if (!Array.isArray(data.cells)) throw new Error("Invalid LOOK from server");
-    for (const value of data.cells) {
-      const cell = object(value);
-      const where = cellPosition(cell.position);
-      // A visible cell is authoritative: forget agents last seen there, then record its occupants.
-      for (const [id, known] of Object.entries(state.agents)) {
-        if (known.position[0] === where[0] && known.position[1] === where[1]) delete state.agents[id];
-      }
-      const agents = cell.agents ?? [];
-      if (!Array.isArray(agents)) throw new Error("Invalid LOOK agents from server");
-      for (const agent of agents) {
-        const seen = object(agent);
-        state.agents[integer(seen.id, 1)] = { level: integer(seen.level, 1), position: where };
-      }
-    }
-  }
-  if (command === "ATTACK") {
-    delete state.agents[integer(data.targetId, 1)];
-    ++state.kills;
-  }
+  if (step.action === "BROADCAST") return { action: step.action, arg: message(step.arg) };
+  return { action: step.action, arg: "" };
 }
 
-export function responseTimeout(command: string, level: number): number {
-  return command === "RITUAL" ? 30_000 * (level + 1) + 15_000 : 10_000;
-}
-
-function boundedJson(value: unknown, limit: number): string {
-  const text = JSON.stringify(value);
-  return text.length <= limit ? text : JSON.stringify({ truncated: true, preview: text.slice(0, limit) });
-}
-
-export async function runAgent(options: {
+export type AgentOptions = {
   connection: GameConnection;
   brain: Brain;
   journal: Journal;
@@ -102,76 +40,168 @@ export async function runAgent(options: {
   maxDecisions: number;
   signal: AbortSignal;
   log?: (line: string) => void;
-}): Promise<State> {
+  verbose?: boolean;
+};
+
+export async function runAgent(options: AgentOptions): Promise<State> {
   const { connection, brain, journal, runDirectory, maxDecisions, signal } = options;
   const log = options.log ?? console.log;
-  const hello = await connection.request(Message.HELLO, { name: brain.name }, 10_000, signal);
+  const verbose = options.verbose ?? false;
+  const meter = new Meter(brain.pricing);
+  const events: GameEvent[] = [];
+  connection.onEvent = (event) => { events.push(event); };
+
+  const hello = await connection.request(Message.HELLO, { name: brain.name }, ACTION_TIMEOUT, signal);
   const state = initialState(hello);
   await journal.append({ command: "HELLO", parameters: { name: brain.name }, reason: "Join the game", response: hello, durationMs: 0 });
-  log(`Agent ${brain.name} ${state.agentId} connecté en (${state.position.x}, ${state.position.y}).`);
-  let observation: unknown = hello;
-  let invalidDecisions = 0;
+  log(`Agent ${brain.name} #${state.agentId} (${brain.model}) connecté en (${state.x}, ${state.y}).`);
 
   async function save(status: string): Promise<void> {
-    await writeFile(join(runDirectory, "session.json"), JSON.stringify({ status, provider: brain.name, threadId: brain.threadId, state }, null, 2), { encoding: "utf8", mode: 0o600 });
+    await writeFile(join(runDirectory, "session.json"), JSON.stringify({ status, provider: brain.name, model: brain.model, state: snapshot(state), metrics: meter.summary() }, null, 2), { encoding: "utf8", mode: 0o600 });
+  }
+
+  function drain(): { interrupt: string | null; died: boolean; ritualDone: boolean } {
+    let interrupt: string | null = null;
+    let died = false;
+    let ritualDone = false;
+    while (events.length > 0) {
+      const event = events.shift()!;
+      if (verbose) log(`  événement ${JSON.stringify(event)}`);
+      const effect = applyEvent(state, event);
+      interrupt ??= effect.interrupt;
+      died ||= effect.died;
+      ritualDone ||= effect.ritualDone;
+    }
+    return { interrupt, died, ritualDone };
+  }
+
+  async function act(step: Step, reason: string): Promise<{ reply: GameReply; interrupt: string | null }> {
+    const request = gameCommand(step, state.agentId);
+    const start = performance.now();
+    let reply: GameReply;
+    try {
+      reply = await connection.request(request.type, request.payload, ACTION_TIMEOUT, signal);
+    } catch (error) {
+      await journal.append({ command: step.action, parameters: request.payload, reason,
+        response: { ok: false, data: { outcome: "unknown", message: "Transport interrupted; command is not retried" } }, durationMs: performance.now() - start });
+      throw error;
+    }
+    meter.countAction();
+    await journal.append({ command: step.action, parameters: request.payload, reason, response: reply, durationMs: performance.now() - start });
+    const outcome = applyReply(state, step.action, step.arg, reply);
+    log(`  ${step.action}${step.arg ? ` ${step.arg}` : ""} ${reply.ok ? "OK" : `KO — ${String(reply.data)}`}${verbose && reply.ok ? ` ${JSON.stringify(reply.data)}` : ""}`);
+    return { reply, interrupt: outcome.interrupt };
+  }
+
+  async function autoTake(): Promise<void> {
+    for (let i = 0; i < MAX_AUTO_TAKES; ++i) {
+      const wanted = wantedHere(state);
+      if (wanted.length === 0) return;
+      const { reply } = await act({ action: "TAKE", arg: RESOURCE_CODES[wanted[0]!]! }, "auto: ressource utile");
+      if (!reply.ok) return;
+    }
+  }
+
+  async function ritual(reason: string): Promise<string> {
+    const { reply } = await act({ action: "RITUAL", arg: "" }, reason);
+    if (!reply.ok) return "rituel refusé";
+    const deadline = Date.now() + ritualTimeout(state.level);
+    log(`  Rituel en cours vers le niveau ${state.level + 1}...`);
+    while (Date.now() < deadline) {
+      const effect = drain();
+      if (effect.died) return "mort";
+      if (effect.ritualDone) return `rituel terminé, niveau ${state.level}`;
+      await delay(250, undefined, { signal });
+    }
+    note(state, "attente du rituel expirée");
+    return "rituel sans confirmation";
+  }
+
+  async function maintain(): Promise<string | null> {
+    await autoTake();
+    if (state.level < MAX_LEVEL && ritualReady(state)) return ritual("auto: inventaire suffisant");
+    return null;
+  }
+
+  async function execute(decision: Decision): Promise<{ interrupt: string | null; stop: boolean }> {
+    for (const raw of decision.plan) {
+      const step = normalize(raw);
+      if (step.action === "STOP") return { interrupt: null, stop: true };
+      if (step.action === "RITUAL") return { interrupt: await ritual(decision.why), stop: !state.alive };
+      const { reply, interrupt } = await act(step, decision.why);
+      let reason = interrupt;
+      if (reply.ok && step.action === "MOVE") {
+        const look = await act({ action: "LOOK", arg: step.arg }, "auto: observation après déplacement");
+        reason ??= look.interrupt;
+        const maintained = await maintain();
+        reason ??= maintained;
+      }
+      const effect = drain();
+      if (effect.died) return { interrupt: "mort", stop: true };
+      reason ??= effect.interrupt;
+      if (reason) return { interrupt: reason, stop: false };
+    }
+    return { interrupt: "plan terminé", stop: false };
   }
 
   await save("running");
+  let interruption: string | null = "début de partie";
+  let invalid = 0;
   try {
-    for (let step = 0; step < maxDecisions; ++step) {
+    const initial = await act({ action: "LOOK", arg: "N" }, "auto: observation initiale");
+    interruption = initial.interrupt ?? interruption;
+    interruption = (await maintain()) ?? interruption;
+    for (let call = 0; call < maxDecisions; ++call) {
       signal.throwIfAborted();
-      const contextState = { ...state, agentName: brain.name, visited: Object.fromEntries(Object.entries(state.visited).slice(-200)) };
-      const prompt = `${GAME_INSTRUCTIONS}\n\nCONTEXTE DU JEU (données):\n${boundedJson(contextState, 16_000)}\nDERNIER RÉSULTAT:\n${boundedJson(observation, 24_000)}\nHISTORIQUE RÉCENT:\n${boundedJson(journal.page(null, 12), 24_000)}\nDécisions restantes: ${maxDecisions - step}. Choisis une seule action.`;
-      const modelSignal = AbortSignal.any([signal, AbortSignal.timeout(120_000)]);
-      const raw = await brain.decide(prompt, modelSignal);
-      let decision;
-      try { decision = parseDecision(raw); }
-      catch (error) {
-        const message = error instanceof Error ? error.message : "Invalid decision";
-        await journal.append({ command: "INVALID_DECISION", parameters: null, reason: "Decision rejected by client", response: { ok: false, data: message }, durationMs: 0 });
-        if (++invalidDecisions >= 3) throw new Error(`${brain.name} produced three invalid decisions; stopping without sending them`);
-        observation = { validationError: message, instruction: "Corrige la décision en respectant le schéma." };
-        continue;
-      }
-      invalidDecisions = 0;
-      state.memory = decision.memory;
-      log(`[${step + 1}/${maxDecisions}] ${decision.command}${decision.direction ? ` ${decision.direction}` : ""}${decision.target !== null ? ` #${decision.target}` : ""} — ${decision.reason}`);
-      const start = performance.now();
-
-      if (decision.command === "STOP") {
-        await journal.append({ command: "STOP", parameters: {}, reason: decision.reason, response: { ok: true, data: "Client stopped" }, durationMs: 0 });
-        await save("stopped");
+      const effect = drain();
+      if (effect.died || !state.alive) {
+        log("Agent éliminé : arrêt.");
+        await save("died");
         return state;
       }
-      if (decision.command === "HISTORY") {
-        const page = journal.page(decision.historyBefore, decision.historyLimit!);
-        observation = { source: "local_history", ...page };
-        // Store references, not recursive copies of history inside history.
-        await journal.append({ command: "HISTORY", parameters: { before: decision.historyBefore, limit: decision.historyLimit }, reason: decision.reason,
-          response: { ok: true, data: { sequences: page.entries.map((entry) => entry.sequence), nextBefore: page.nextBefore } }, durationMs: performance.now() - start });
-      } else {
-        const request = gameCommand(decision, state.agentId);
-        let response: GameReply;
-        try {
-          response = await connection.request(request.type, request.payload, responseTimeout(decision.command, state.level), signal);
-        } catch (error) {
-          await journal.append({ command: decision.command, parameters: request.payload, reason: decision.reason,
-            response: { ok: false, data: { outcome: "unknown", message: "Transport interrupted; command is not retried" } }, durationMs: performance.now() - start });
-          throw error;
-        }
-        await journal.append({ command: decision.command, parameters: request.payload, reason: decision.reason, response, durationMs: performance.now() - start });
-        updateState(state, decision.command, response);
-        observation = { command: decision.command, ...response };
-        const detail = decision.command === "RITUAL" ? ` — niveau ${state.level}` : decision.command === "ATTACK" ? ` — agent #${decision.target} éliminé` : "";
-        log(response.ok ? `  OK${detail}` : `  KO — ${String(response.data)}`);
+      interruption = effect.interrupt ?? interruption;
+      const prompt = renderState(state, maxDecisions - call, interruption);
+      if (verbose) log(`--- prompt (${prompt.length} car.) ---\n${prompt}\n---`);
+      const start = performance.now();
+      const reply = await brain.decide(prompt, AbortSignal.any([signal, AbortSignal.timeout(DECISION_TIMEOUT)]));
+      const latency = performance.now() - start;
+      const usageLine = meter.record(reply.usage, latency, prompt.length);
+      log(`  [IA] ${usageLine}`);
+      let decision: Decision;
+      try {
+        decision = parseDecision(reply.text);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Invalid decision";
+        await journal.append({ command: "INVALID_DECISION", parameters: { text: reply.text.slice(0, 500) }, reason: "Decision rejected by client", response: { ok: false, data: message }, durationMs: latency });
+        if (++invalid >= MAX_INVALID) throw new Error(`${brain.name} produced ${MAX_INVALID} invalid decisions; stopping`);
+        interruption = `décision invalide: ${message}`;
+        continue;
       }
+      invalid = 0;
+      state.memory = decision.memory;
+      await journal.append({ command: "DECISION", parameters: { plan: decision.plan, memory: decision.memory }, reason: decision.why,
+        response: { ok: true, data: { usage: reply.usage, latencyMs: Math.round(latency), promptChars: prompt.length } }, durationMs: latency });
+      log(`[${call + 1}/${maxDecisions}] ${decision.plan.map((step) => `${step.action}${step.arg ? ` ${step.arg}` : ""}`).join(", ")} — ${decision.why}`);
+      if (verbose) log(`  mémoire: ${decision.memory}`);
+      const result = await execute(decision);
+      if (result.stop) {
+        log(state.alive ? "Arrêt demandé par l'IA." : "Agent éliminé : arrêt.");
+        log(`Bilan : ${meter.describe()}`);
+        await save(state.alive ? "stopped" : "died");
+        return state;
+      }
+      interruption = result.interrupt;
       await save("running");
     }
-    await save("decision_limit");
     log("Limite de décisions atteinte.");
+    log(`Bilan : ${meter.describe()}`);
+    await save("decision_limit");
     return state;
   } catch (error) {
+    log(`Bilan : ${meter.describe()}`);
     await save(signal.aborted ? "interrupted" : "failed");
     throw error;
+  } finally {
+    connection.onEvent = undefined;
   }
 }

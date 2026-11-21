@@ -1,18 +1,28 @@
 #include <utility>
-#include <functional>
 #include <mutex>
 #include <optional>
 #include <type_traits>
 #include <algorithm>
 #include <cstdlib>
-#include <ranges>
+#include <variant>
+#include <expected>
 
 #include "zioop/core/Game.hpp"
+#include "zioop/core/Error.hpp"
 #include "zioop/core/Matrix.hpp"
 
 namespace {
 
-    std::optional<core::Direction> directionFrom(const long long dx, const long long dy) {
+    template<typename T>
+    struct is_expected: std::false_type {};
+
+    template<typename T, typename E>
+    struct is_expected<std::expected<T, E>> : std::true_type {};
+
+    template<typename T>
+    inline constexpr bool is_expected_v = is_expected<std::remove_cvref_t<T>>::value;
+
+    std::optional<core::Direction> directionFrom(const std::int64_t dx, const std::int64_t dy) {
         if (dx == 0 && dy == 0) {
             return std::nullopt;
         }
@@ -37,42 +47,13 @@ namespace core {
         return it == m_agents.end() ? 0 : it->second.size();
     }
 
-    Agent *Game::findAgentUnlocked(AgentId agentId) {
-        for (const auto &val: m_agents | std::views::values) {
-            auto found = std::ranges::find_if(
-                val.begin(),
-                val.end(),
-                [&](const auto &agent) {
-                    return agent->getId() == agentId;
-                }
-            );
-            if (found != val.end()) {
-                return found->get();
-            }
-        }
-
-        return nullptr;
+    Agent *Game::findAgentUnlocked(const AgentId agentId) {
+        return m_agentIndex[agentId].agent;
     }
 
-    Agent *Game::findAgentUnlocked(const ClientId clientId, AgentId agentId) {
-        const auto it = m_agents.find(clientId);
-
-        if (it == m_agents.end() || it->first != clientId) {
-            return nullptr;
-        }
-
-        const auto ait = std::ranges::find_if(
-            it->second.begin(),
-            it->second.end(),
-            [&](const auto &agent) {
-                return agent->getId() == agentId;
-            });
-
-        if (ait == it->second.end()) {
-            return nullptr;
-        }
-
-        return ait->get();
+    Agent *Game::findAgentUnlocked(const ClientId clientId, const AgentId agentId) {
+        const auto &[clientEntryId, agent] = m_agentIndex[agentId];
+        return clientEntryId == clientId ? agent : nullptr;
     }
 
     template<typename F>
@@ -86,6 +67,11 @@ namespace core {
             if (!agent) return false;
             f(*agent);
             return true;
+        } else if constexpr(is_expected_v<R>) {
+            if (!agent) {
+                return R{std::unexpected(Error{ErrorCode::AGENT_NOT_FOUND})};
+            }
+            return f(*agent);
         } else {
             if (!agent) return std::optional<R>{};
             return std::optional<R>{f(*agent)};
@@ -95,13 +81,13 @@ namespace core {
     void Game::tick(const std::chrono::steady_clock::time_point now) {
         std::scoped_lock lock_guard(m_stateMutex);
 
-        m_matrix.repop(now); // Repop des resources.
+        m_matrix.repop(now);
 
         // @todo need to be refactor for future async events.
         for (const auto &[clientId, agents]: m_agents) {
             for (const auto &agent: agents) {
                 if (agent->completeRitual(now)) {
-                    agent->setHealth(FULL_LIFE);
+                    agent->setFullLife();
                     emitUnlocked(RitualCompleted{
                         .base = {.agentId = agent->getId(), .clientId = clientId},
                         .level = agent->getLevel()
@@ -135,43 +121,53 @@ namespace core {
         return events;
     }
 
-    std::optional<GiveResult> Game::give(
+    std::expected<GiveResult, Error> Game::give(
         const ClientId clientId,
         const AgentId agentId,
         const ResourceType type,
         const AgentId targetId
     ) {
-        return withAgent(clientId, agentId, [&](Agent &agent) -> std::optional<GiveResult> {
+        return withAgent(clientId, agentId, [this, &targetId, &type](Agent &agent) -> std::expected<GiveResult, Error> {
             const auto target = findAgentUnlocked(targetId);
             if (target == nullptr) {
-                return GiveResult::TARGET_NOT_FOUND;
+                return std::unexpected(Error{ErrorCode::TARGET_NOT_FOUND});
             }
 
             if (target == &agent) {
-                return GiveResult::CANT_GIVE_YOURSELF;
+                return std::unexpected(Error{ErrorCode::CANT_GIVE_YOURSELF});
             }
 
             if (agent.getCell() != target->getCell()) {
-                return GiveResult::TARGET_TO_FAR;
+                return std::unexpected(Error{ErrorCode::TARGET_TOO_FAR});
             }
 
-            return agent.getInventory().give(type, target->getInventory())
-                       ? GiveResult::GIVED
-                       : GiveResult::RESOURCE_NOT_FOUND;
-        }).value_or(std::nullopt);
+            const auto &result = agent.getInventory().give(type, target->getInventory());
+
+            return GiveResult{
+                .base = { .agentId = agent.getId()},
+                .targetId = targetId,
+                .status = result,
+            };
+        });
     }
 
-    std::optional<Game::TakeResult> Game::take(
+    std::expected<TakenResult, Error> Game::take(
         const ClientId clientId,
         const AgentId agentId,
         const ResourceType type
     ) {
-        return withAgent(clientId, agentId, [&](Agent &agent) -> std::optional<TakeResult> {
-            return TakeResult{
-                .taken = agent.take(type),
+        return withAgent(clientId, agentId, [&type](Agent &agent) -> std::expected<TakenResult, Error> {
+            const auto taken = agent.take(type);
+
+            if (!taken) {
+                return std::unexpected(Error{ErrorCode::CANT_TAKE_RESOURCE, static_cast<int>(type)});
+            }
+
+            return TakenResult{
+                .base = { .agentId = agent.getId() },
                 .inventory = agent.getItems()
             };
-        }).value_or(std::nullopt);
+        });
     }
 
     std::optional<ClientId> Game::findOwnerUnlocked(const AgentId agentId) {
@@ -183,98 +179,143 @@ namespace core {
         return std::nullopt;
     }
 
-    std::optional<AttackResult> Game::attack(
+    std::expected<AttackResult, Error> Game::attack(
         const ClientId clientId,
         const AgentId agentId,
         const AgentId targetId
     ) {
-        return withAgent(clientId, agentId, [&](Agent &agent) -> std::optional<AttackResult> {
+        return withAgent(clientId, agentId, [this, &targetId](Agent &agent) -> std::expected<AttackResult, Error> {
             const auto target = findAgentUnlocked(targetId);
+
             if (target == nullptr) {
-                return AttackResult::TARGET_NOT_FOUND;
+                return std::unexpected(Error(ErrorCode::TARGET_TOO_FAR));
             }
+
             const auto result = agent.attack(target);
-            if (AttackResult::KILLED == result) {
-                m_matrix.removeAgent(*target);
-                emitUnlocked(Died{
-                    .base = {.agentId = targetId, .clientId = target->getClientId()}
-                });
-                std::erase_if(m_agents.at(target->getClientId()), [&](const auto &a) {
-                    return a->getId() == targetId;
-                });
+
+            switch (result) {
+                case AttackStatus::RITUAL_IN_PROGRESS:
+                case AttackStatus::SAME_OWNER:
+                case AttackStatus::TARGET_NOT_FOUND:
+                case AttackStatus::TARGET_TOO_STRONG:
+                case AttackStatus::TOO_FAR:
+                    return std::unexpected(Error(ErrorCode::TARGET_TOO_FAR, attackStatusErrorMessage(result)));
+
+                case AttackStatus::KILLED:
+                    m_matrix.removeAgent(*target);
+                    emitUnlocked(Died{
+                        .base = {.agentId = targetId, .clientId = target->getClientId()}
+                    });
+                    m_agentIndex.erase(targetId);
+                    std::erase_if(m_agents.at(target->getClientId()), [targetId](const auto &a) {
+                        return a->getId() == targetId;
+                    });
+                break;
+                default: ;
             }
-            return result;
-        }).value_or(std::nullopt);
+            return AttackResult{
+                .base = { .agentId = agent.getId() },
+                .targetId = targetId,
+                .status = result
+            };
+        });
     }
 
     std::optional<Game::InitPlacement> Game::placeAgent(
         const ClientId clientId
     ) {
-        auto [it, _] = m_agents.try_emplace(clientId);
         auto agent = std::make_unique<Agent>(clientId);
-
         const auto position = m_matrix.addAgent(*agent);
 
         if (!position) {
             return std::nullopt;
         }
-        it->second.push_back(std::move(agent));
+
+        const auto &agentId = agent->getId();
+        m_agentIndex.emplace(agent->getId(), AgentEntry{
+            .clientId = clientId,
+            .agent = agent.get()
+        });
+        m_agents[clientId].push_back(std::move(agent));
 
         return InitPlacement{
-            .agentId = it->second.back()->getId(),
-            .position = *position
+            .agentId = agentId,
+            .position = *position,
         };
     }
 
-    std::optional<InvocationResult> Game::instanciatAgent(
+    std::expected<HealResult, Error> Game::heal(
+        const ClientId clientId,
+        AgentId agentId
+    ) {
+        return withAgent(clientId, agentId, [&agentId](Agent &agent) -> std::expected<HealResult, Error> {
+            HealResult result;
+            result.base = {.agentId = agentId};
+            auto &inventory = agent.getInventory();
+
+            if (!inventory.has(ResourceType::MAGIC_WATER)) {
+                return std::unexpected(Error{ErrorCode::NO_WATER_ITEM});
+            }
+
+            inventory.remove(ResourceType::MAGIC_WATER, 1);
+            agent.setFullLife();
+            result.success = true;
+
+            return result;
+        });
+    }
+
+    std::expected<InvocationResult, Error> Game::instanciatAgent(
         const ClientId clientId,
         const AgentId agentId
     ) {
-        return withAgent(clientId, agentId, [&](Agent &agent) -> std::optional<InvocationResult> {
+        return withAgent(clientId, agentId, [this, &clientId] (Agent &agent) -> std::expected<InvocationResult, Error> {
             auto &inventory = agent.getInventory();
             const auto &index = static_cast<std::size_t>(agent.getLevel() - 1);
-
             auto &cost = requirements[index];
-            if (const auto removed = inventory.remove(cost); !removed) {
-                return std::nullopt;
+
+            if (!inventory.hasAll(cost)) {
+                return std::unexpected(Error{ErrorCode::NO_REQUIRED_RESOURCES});
             }
 
             const auto newAgent = placeAgent(clientId);
             if (!newAgent) {
-                return std::nullopt;
+                return std::unexpected(Error{ErrorCode::FAILED_TO_CREATE_MONSTER});
             }
+
+            inventory.remove(cost);
 
             return InvocationResult{
                 .base = {.agentId = agent.getId()},
                 .spawnedAgentId = newAgent->agentId,
                 .position = newAgent->position
             };
-        }).value_or(std::nullopt);
+        });
     }
 
-    std::optional<Game::InitPlacement> Game::initClient(const ClientId clientId) {
+    std::expected<Game::InitPlacement, Error> Game::initClient(const ClientId clientId) {
         std::scoped_lock lock(m_stateMutex);
 
         if (m_agents.contains(clientId)) {
-            return std::nullopt;
+            return std::unexpected(Error{ErrorCode::CLIENT_ID_ALREADY_REGISTERED});
         }
 
-        const auto placement = placeAgent(clientId);
+        const auto &placement = placeAgent(clientId);
         if (!placement) {
             m_agents.erase(clientId);
         }
-        return placement;
+        return *placement;
     }
 
-    std::optional<BroadcastResult> Game::broadcast(
+    std::expected<BroadcastResult, Error> Game::broadcast(
         const ClientId clientId,
         const AgentId agentId,
-        std::string &message
+        const std::string &message
     ) {
-        return withAgent(clientId, agentId, [&](Agent &speaker) -> std::optional<BroadcastResult> {
+        return withAgent(clientId, agentId, [&](Agent &speaker) -> std::expected<BroadcastResult, Error> {
             const auto cell = speaker.getCell();
             if (!cell) {
-                return std::nullopt;
+                return std::unexpected(Error{ErrorCode::CELL_NOT_FOUND});
             }
             const auto [x, y] = cell->getPosition();
             speaker.say(message, std::chrono::steady_clock::now() + SpeechDuration);
@@ -302,66 +343,79 @@ namespace core {
             return BroadcastResult{
                 .base = {.agentId = agentId}
             };
-        }).value_or(std::nullopt);
+        });
     }
 
-    std::optional<MoveResult> Game::move(
+    std::expected<MoveResult, Error> Game::move(
         const ClientId clientId,
         const AgentId agentId,
         const Direction direction
     ) {
-        return withAgent(clientId, agentId,[&](Agent &agent) -> std::optional<MoveResult> {
+        return withAgent(clientId, agentId,[&](Agent &agent) -> std::expected<MoveResult, Error> {
+
+            const auto &position = agent.move(m_matrix, direction);
+            if (!position) {
+                return std::unexpected(Error{ErrorCode::FAILED_TO_MOVE});
+            }
             return MoveResult{
                 .base = {.agentId = agentId},
-                .position = agent.move(m_matrix, direction)
+                .position = position
             };
-        }).value_or(std::nullopt);
+        });
     }
 
-    std::optional<InventoryResult> Game::inventory(
+    InventoryResult Game::inventory(
         const ClientId clientId,
         const AgentId agentId
     ) {
-        return withAgent(clientId, agentId, [&](const Agent &agent) -> std::optional<InventoryResult> {
+        return withAgent(clientId, agentId, [&](const Agent &agent) {
+            const auto &items = agent.getItems();
+
             return InventoryResult{
-                .base = {.agentId = agentId},
-                .inventory = agent.getItems()
+                .base = { .agentId = agentId },
+                .inventory = items
             };
-        }).value_or(std::nullopt);
+        }).value();
     }
 
-    std::optional<RitualResult> Game::ritual(
+    std::expected<RitualResult, Error> Game::ritual(
         const ClientId clientId,
         const AgentId agentId
     ) {
-        return withAgent(clientId, agentId, [&](Agent &agent) -> std::optional<RitualResult> {
+        return withAgent(clientId, agentId, [&](Agent &agent) -> std::expected<RitualResult, Error> {
             RitualResult result{
                 .base = {.agentId = agentId}
             };
+
             if (agent.isRitualInProgress()) {
-                result.result = RitualStartResult::ALREADY_IN_PROGRESS;
-                return result;
+                return std::unexpected(Error{ErrorCode::RITUAL_ALREADY_IN_PROGRESS});
             }
+
             const auto duration = RitualTimePerLevel * (agent.getLevel() + 1);
             if (!agent.startRitual(duration, std::chrono::steady_clock::now())) {
-                result.result = RitualStartResult::NOT_ENOUGH_RESOURCES;
+                return std::unexpected(Error{ErrorCode::NOT_ENOUGH_RESOURCES});
             }
+
             return result;
-        }).value_or(std::nullopt);
+        });
     }
 
-    std::optional<LookResult> Game::look(
+    std::expected<LookResult, Error> Game::look(
         const ClientId clientId,
         const AgentId agentId,
         const Direction direction
     ) {
-        return withAgent(clientId, agentId, [&](Agent &agent) -> std::optional<LookResult> {
-            auto result = agent.look(m_matrix, direction);
+        return withAgent(clientId, agentId, [&](Agent &agent) -> std::expected<LookResult, Error> {
+            const auto result = agent.look(m_matrix, direction);
+
+            if (!result) {
+                return std::unexpected(Error{ErrorCode::NOT_YET_READY});
+            }
             if (result) {
                 agent.recordLook(direction);
             }
-            return result;
-        }).value_or(std::nullopt);
+            return *result;
+        });
     }
 
     MatrixSnapshot Game::getMatrix() const {
@@ -418,6 +472,28 @@ namespace core {
         return result;
     }
 
+    std::optional<std::chrono::steady_clock::time_point> Game::reserve(
+        const ClientId clientId,
+        const AgentId agentId,
+        const GameCommand command
+    ) {
+        return withAgent(clientId, agentId, [&](Agent &agent) {
+            return agent.reserve(
+                commandDuration(command),
+                std::chrono::steady_clock::now());
+        });
+    }
+
+    std::optional<ClientId> Game::getAgentClientId(const AgentId agentId) {
+        std::scoped_lock lock_guard(m_stateMutex);
+        const auto agent = findAgentUnlocked(agentId);
+        if (!agent) {
+            return std::nullopt;
+        }
+
+        return agent->getClientId();
+    }
+
     void Game::removeClientAgent(const ClientId clientId) {
         std::scoped_lock lock_guard(m_stateMutex);
 
@@ -427,6 +503,7 @@ namespace core {
         }
 
         for (const auto &agent: it->second) {
+            m_agentIndex.erase(agent->getId());
             m_matrix.removeAgent(*agent);
         }
         m_agents.erase(it);

@@ -49,7 +49,7 @@ namespace core {
             case ResourceType::MAGIC_WATER: {
                 static constexpr ResourceDef d{
                     .name = "Eau magique",
-                    .lifetime = std::chrono::seconds{0}
+                    .lifetime = std::chrono::seconds{300}
                 };
                 return d;
             }
